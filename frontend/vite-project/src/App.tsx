@@ -37,22 +37,19 @@ export default function Page() {
             </div>
           </header>
           
-          {/* Main content container */}
           <main className="flex-1 overflow-y-auto">
-            <div className="container mx-auto px-8 py-8">
-              <div className="max-w-7xl mx-auto space-y-8">
-                {/* Search section */}
-                <div className="flex gap-2 max-w-md mx-auto">
-                  <Input placeholder="Search Ticker" className="flex-1" />
-                  <Button type="submit">Search</Button>
-                </div>
+            <div className="container max-w-7xl mx-auto px-8 py-8 space-y-8">
+              {/* Search section */}
+              <div className="flex gap-2 max-w-md mx-auto">
+                <Input placeholder="Search Ticker" className="flex-1" />
+                <Button type="submit">Search</Button>
+              </div>
 
-                {/* Indicators section */}
-                <div className="space-y-4">
-                  <h2 className="text-lg font-semibold px-6">Indicators</h2>
-                  <div className="bg-muted/50 rounded-xl p-6">
-                    <IndicatorTable />
-                  </div>
+              {/* Indicators section */}
+              <div className="space-y-4">
+                <h2 className="text-lg font-semibold px-6">Indicators</h2>
+                <div className="bg-muted/50 rounded-xl p-6">
+                  <IndicatorTable />
                 </div>
               </div>
             </div>
