@@ -171,4 +171,7 @@ cython_debug/
 .pypirc
 
 
+client_secrets.json
+
+
 .vscode/
