@@ -6,7 +6,7 @@
 # # TA-Lib==0.6.0
 # setuptools==75.8.0
 
-
+python-dotenv
 yfinance
 fastapi 
 uvicorn
@@ -14,3 +14,9 @@ numpy
 ta-lib
 TA-Lib
 
+google-api-python-client
+google-generativeai
+pysrt
+google-auth-oauthlib
+google-auth-httplib2
+youtube-transcript-api

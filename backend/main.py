@@ -1,9 +1,13 @@
 from fastapi import FastAPI
+from dotenv import load_dotenv
 import uvicorn
 from utils.data import get_data, get_sentiment
 from utils.indicators import calculate_indicators
 from utils.scoring import evaluate_signals, classify_signal
+from utils.youtubeSentiment import YouTubeSentimentAnalyzer
 import pandas as pd
+
+load_dotenv()
 
 app = FastAPI()
 
@@ -58,6 +62,24 @@ async def analyze(ticker: str):
         return result
     except Exception as e:
         return {"error": str(e)}
+    
+@app.get("/youtube-sentiment")
+async def youtube_sentiment():
+    try:
+        analyzer = YouTubeSentimentAnalyzer()
+        results = analyzer.process_latest_livestream()
+        
+        if not results:
+            return {"error": "Failed to process livestream"}
+            
+        return {
+            "video_info": results["video_info"],
+            "analysis": results["analysis"],
+            "results_path": results["results_path"]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
