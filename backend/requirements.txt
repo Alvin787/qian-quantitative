@@ -8,10 +8,10 @@
 
 python-dotenv
 yfinance
-fastapi 
+fastapi
 uvicorn
 numpy
-ta-lib
+pandas
 TA-Lib
 
 google-api-python-client
@@ -20,3 +20,5 @@ pysrt
 google-auth-oauthlib
 google-auth-httplib2
 youtube-transcript-api
+openai
+yt-dlp

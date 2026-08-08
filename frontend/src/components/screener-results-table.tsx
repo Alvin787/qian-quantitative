@@ -1,0 +1,293 @@
+import { useMemo, useState } from "react"
+import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react"
+
+import { StatusBadge } from "@/components/status-badge"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import type { ResultRow } from "@/lib/screener-api"
+import {
+  columnDescription,
+  columnLabel,
+  compareValues,
+  formatValue,
+  statusBadgeFor,
+} from "@/lib/screener-columns"
+import { cn } from "@/lib/utils"
+
+type SortDirection = "asc" | "desc"
+
+const DELIMITED_COLUMNS = new Set(["fail_reasons", "warnings"])
+const LEFT_ALIGNED_COLUMNS = new Set([
+  "ticker",
+  "fail_reasons",
+  "warnings",
+  "industry",
+])
+
+function decodeDisplayText(value: string) {
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+}
+
+function DelimitedPills({
+  value,
+  variant,
+}: {
+  value: string
+  variant: "failure" | "warning"
+}) {
+  const items = value
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  if (items.length === 0) return <span className="text-muted-foreground">—</span>
+
+  return (
+    <div
+      className={cn(
+        "flex gap-1",
+        variant === "warning"
+          ? "max-w-[20rem] flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          : "flex-wrap"
+      )}
+    >
+      {items.map((item, index) => (
+        <span
+          key={`${item}-${index}`}
+          className={cn(
+            "inline-flex rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
+            variant === "failure"
+              ? "bg-red-500/15 text-red-700 dark:bg-red-500/20 dark:text-red-300"
+              : "bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+          )}
+        >
+          {decodeDisplayText(item)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function tradingViewUrl(row: ResultRow) {
+  const ticker = String(row.ticker ?? row.symbol ?? "").trim().toUpperCase()
+  if (!ticker) return null
+
+  const rawExchange = String(row.exchange ?? "").trim().toUpperCase()
+  const exchangeAliases: Record<string, string> = {
+    NMS: "NASDAQ",
+    NAS: "NASDAQ",
+    NYQ: "NYSE",
+    ASE: "AMEX",
+  }
+  const exchange = exchangeAliases[rawExchange] ?? rawExchange
+  const symbol = exchange ? `${exchange}-${ticker}` : ticker
+
+  return `https://www.tradingview.com/symbols/${encodeURIComponent(symbol)}/`
+}
+
+export function ScreenerResultsTable({
+  columns,
+  rows,
+  emptyMessage = "No rows match the current filters.",
+}: {
+  columns: string[]
+  rows: ResultRow[]
+  emptyMessage?: string
+}) {
+  const [sortColumn, setSortColumn] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
+
+  const sortedRows = useMemo(() => {
+    if (!sortColumn) return rows
+    const factor = sortDirection === "asc" ? 1 : -1
+    return [...rows].sort((a, b) => {
+      const left = a[sortColumn]
+      const right = b[sortColumn]
+      const leftMissing = left === null || left === undefined || left === ""
+      const rightMissing = right === null || right === undefined || right === ""
+
+      if (leftMissing && rightMissing) return 0
+      if (leftMissing) return 1
+      if (rightMissing) return -1
+      return compareValues(left, right) * factor
+    })
+  }, [rows, sortColumn, sortDirection])
+
+  function toggleSort(column: string) {
+    if (column !== sortColumn) {
+      setSortColumn(column)
+      setSortDirection("asc")
+      return
+    }
+    if (sortDirection === "asc") {
+      setSortDirection("desc")
+      return
+    }
+    setSortColumn(null)
+    setSortDirection("asc")
+  }
+
+  if (columns.length === 0) {
+    return (
+      <p className="text-muted-foreground p-6 text-sm">
+        No columns are visible. Enable at least one column.
+      </p>
+    )
+  }
+
+  return (
+    <TooltipProvider>
+      <Table className="w-max min-w-full text-xs sm:text-sm">
+        <TableHeader className="bg-muted/50 sticky top-0 z-10">
+          <TableRow>
+            {columns.map((column) => {
+              const active = column === sortColumn
+              const description = columnDescription(column)
+              const centered = !LEFT_ALIGNED_COLUMNS.has(column)
+              const sortButton = (
+                <button
+                  type="button"
+                  onClick={() => toggleSort(column)}
+                  className={cn(
+                    "focus-visible:ring-ring flex w-full items-center gap-0.5 px-2 py-1.5 text-left font-medium outline-none focus-visible:ring-2",
+                    centered && "justify-center text-center",
+                    active && "text-foreground"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      description &&
+                        "decoration-muted-foreground/60 underline decoration-dotted underline-offset-4"
+                    )}
+                  >
+                    {columnLabel(column)}
+                  </span>
+                  {active ? (
+                    sortDirection === "asc" ? (
+                      <ArrowUp className="size-3" aria-hidden />
+                    ) : (
+                      <ArrowDown className="size-3" aria-hidden />
+                    )
+                  ) : (
+                    <ChevronsUpDown className="size-3 opacity-40" aria-hidden />
+                  )}
+                </button>
+              )
+
+              return (
+                <TableHead
+                  key={column}
+                  scope="col"
+                  aria-sort={
+                    active
+                      ? sortDirection === "asc"
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                  className={cn(
+                    "h-9 whitespace-nowrap p-0",
+                    centered && "text-center"
+                  )}
+                >
+                  {description ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{sortButton}</TooltipTrigger>
+                      <TooltipContent side="top">{description}</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    sortButton
+                  )}
+                </TableHead>
+              )
+            })}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {sortedRows.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={columns.length}
+                className="text-muted-foreground h-24 text-center"
+              >
+                {emptyMessage}
+              </TableCell>
+            </TableRow>
+          ) : (
+            sortedRows.map((row, index) => (
+              <TableRow key={String(row.ticker ?? index)}>
+                {columns.map((column) => {
+                  const value = row[column]
+                  const badge = statusBadgeFor(value ?? null, column)
+                  const isDelimited = DELIMITED_COLUMNS.has(column)
+                  const centered = !LEFT_ALIGNED_COLUMNS.has(column)
+                  const tickerUrl = column === "ticker" ? tradingViewUrl(row) : null
+                  return (
+                    <TableCell
+                      key={column}
+                      className={cn(
+                        "max-w-[16rem] truncate px-2 py-1.5",
+                        isDelimited && "max-w-sm whitespace-normal",
+                        centered && "text-center",
+                        typeof value === "number" && "tabular-nums",
+                        column === "ticker" && "font-medium"
+                      )}
+                      title={
+                        !badge &&
+                        !isDelimited &&
+                        typeof value === "string" &&
+                        value
+                          ? value
+                          : undefined
+                      }
+                    >
+                      {isDelimited && typeof value === "string" ? (
+                        <DelimitedPills
+                          value={value}
+                          variant={column === "warnings" ? "warning" : "failure"}
+                        />
+                      ) : tickerUrl ? (
+                        <a
+                          href={tickerUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-foreground underline decoration-muted-foreground/50 underline-offset-2 hover:decoration-foreground"
+                          title={`Open ${String(value)} on TradingView`}
+                        >
+                          {formatValue(value ?? null)}
+                        </a>
+                      ) : badge ? (
+                        <StatusBadge tone={badge.tone} label={badge.label} />
+                      ) : column === "industry" && typeof value === "string" ? (
+                        decodeDisplayText(value)
+                      ) : (
+                        formatValue(value ?? null)
+                      )}
+                    </TableCell>
+                  )
+                })}
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </TooltipProvider>
+  )
+}

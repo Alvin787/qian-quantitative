@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -170,8 +170,23 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-
+# Local secrets / credentials
 client_secrets.json
+client_secret.json
+client_secret*.json
 
+# OS junk
+.DS_Store
+
+# Backend generated outputs
+backend/results/
+backend/data/youtube_transcripts/
+backend/screener/*.csv
+backend/screener/screener_output/
+
+# Frontend dependencies and build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
 
 .vscode/

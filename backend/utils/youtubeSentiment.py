@@ -36,8 +36,8 @@ class YouTubeSentimentAnalyzer:
         # Initialize AI service
         self.ai_service = AIService(gemini_api_key)
         
-        # Create results directory if it doesn't exist
-        self.results_dir = Path('results')
+        # Create results directory if it doesn't exist (anchored to backend/, not CWD)
+        self.results_dir = Path(__file__).resolve().parent.parent / 'results'
         self.results_dir.mkdir(exist_ok=True)
     
     def get_latest_livestream_video(self, max_results=20, index=0):
@@ -217,47 +217,62 @@ Transcript:
         logger.info(f"Results saved to {video_dir}")
         return str(video_dir)
 
-    def process_latest_livestream(self, index=0):
-        """Main function to process livestream and generate insights."""
-        # Get latest livestream
-        video_info = self.get_latest_livestream_video(index=index)
+    def process_latest_livestream(self, start_index=0, max_attempts=5):
+        """Main function to process livestream and generate insights.
+        Will try multiple videos if transcripts are unavailable."""
+        
+        for attempt in range(max_attempts):
+            current_index = start_index + attempt
+            logger.info(f"Trying video at index {current_index}...")
+            
+            # Get livestream at current index
+            video_info = self.get_latest_livestream_video(index=current_index)
 
-        if not video_info:
-            logger.warning("No completed livestream found.")
-            return None
+            if not video_info:
+                logger.warning(f"No completed livestream found at index {current_index}.")
+                continue
+            
+            # Get transcript
+            transcript = self.get_transcript(video_info['id'])
+            if not transcript:
+                logger.warning(f"No English transcript available for video at index {current_index}. Trying next video...")
+                continue
+            
+            # If we got here, we have a transcript!
+            logger.info(f"Found video with transcript at index {current_index}: {video_info['title']}")
+            
+            # Analyze transcript
+            logger.info("Analyzing transcript with AI service...")
+            analysis = self.analyze_transcript(transcript, video_info)
+            if not analysis:
+                logger.warning("Failed to analyze transcript. Trying next video...")
+                continue
+            
+            # Save results
+            results_path = self.save_results(video_info, analysis, transcript)
+            
+            logger.info("Analysis complete!")
+            return {
+                'video_info': video_info,
+                'analysis': analysis,
+                'results_path': results_path
+            }
         
-        # Get transcript
-        transcript = self.get_transcript(video_info['id'])
-        if not transcript:
-            logger.warning("No English transcript available.")
-            return None
-        
-        # Analyze transcript
-        logger.info("Analyzing transcript with AI service...")
-        analysis = self.analyze_transcript(transcript, video_info)
-        if not analysis:
-            logger.warning("Failed to analyze transcript.")
-            return None
-        
-        # Save results
-        results_path = self.save_results(video_info, analysis, transcript)
-        
-        logger.info("Analysis complete!")
-        return {
-            'video_info': video_info,
-            'analysis': analysis,
-            'results_path': results_path
-        }
+        # If we've tried the maximum number of videos and none worked
+        logger.error(f"Failed to find a video with an available transcript after {max_attempts} attempts.")
+        return None
 
 def main():
     try:
         analyzer = YouTubeSentimentAnalyzer()
-        results = analyzer.process_latest_livestream()
+        results = analyzer.process_latest_livestream(start_index=0, max_attempts=5)
         
         if results:
             print("\n=============== ANALYSIS RESULTS ===============\n")
             print(results['analysis'])
             print(f"\nResults saved to: {results['results_path']}")
+        else:
+            print("Could not find any videos with available transcripts to analyze.")
         
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
