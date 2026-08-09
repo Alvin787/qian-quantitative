@@ -22,3 +22,5 @@ google-auth-httplib2
 youtube-transcript-api
 openai
 yt-dlp
+pytest
+httpx

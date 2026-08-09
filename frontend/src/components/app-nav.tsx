@@ -9,58 +9,109 @@ import {
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
+import type { Strategy } from "@/lib/screener-api"
 import { usePersistentState } from "@/lib/use-persistent-state"
 import { cn } from "@/lib/utils"
 
 const SIDEBAR_STORAGE_KEY = "qq.sidebar.collapsed"
 
-const navItems = [
-  { title: "Discover", href: "#discover", icon: ScanSearch, current: true },
-] as const
-
-function NavLinks({
+function ScreenerNav({
+  strategies,
+  selectedStrategyId,
+  onSelectStrategy,
   collapsed = false,
+  expanded,
+  listId,
+  onToggleExpanded,
+  onExpandSidebar,
   onNavigate,
 }: {
+  strategies: Strategy[]
+  selectedStrategyId: string | null
+  onSelectStrategy: (strategyId: string) => void
   collapsed?: boolean
+  expanded: boolean
+  listId: string
+  onToggleExpanded: () => void
+  onExpandSidebar?: () => void
   onNavigate?: () => void
 }) {
   return (
-    <ul className="flex flex-col gap-1">
-      {navItems.map((item) => (
-        <li key={item.title}>
-          <a
-            href={item.href}
-            aria-current={item.current ? "page" : undefined}
-            title={collapsed ? item.title : undefined}
-            onClick={onNavigate}
-            className={cn(
-              "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-              "focus-visible:ring-sidebar-ring outline-none focus-visible:ring-2",
-              collapsed && "justify-center px-0",
-              item.current
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            )}
-          >
-            <item.icon className="size-4 shrink-0" aria-hidden />
-            <span className={cn(collapsed && "sr-only")}>{item.title}</span>
-          </a>
-        </li>
-      ))}
-    </ul>
+    <div>
+      <button
+        type="button"
+        aria-expanded={collapsed ? false : expanded}
+        aria-controls={collapsed ? undefined : listId}
+        title={collapsed ? "Screener" : undefined}
+        onClick={() => {
+          if (collapsed) {
+            onExpandSidebar?.()
+          } else {
+            onToggleExpanded()
+          }
+        }}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+          "focus-visible:ring-sidebar-ring outline-none focus-visible:ring-2",
+          collapsed && "justify-center px-0",
+          "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        )}
+      >
+        <ScanSearch className="size-4 shrink-0" aria-hidden />
+        <span className={cn(collapsed && "sr-only")}>Screener</span>
+      </button>
+      {!collapsed && expanded ? (
+        <ul id={listId} className="mt-1 flex flex-col gap-1">
+          {strategies.map((strategy) => {
+            const current = strategy.id === selectedStrategyId
+            return (
+              <li key={strategy.id}>
+                <button
+                  type="button"
+                  aria-current={current ? "page" : undefined}
+                  onClick={() => {
+                    onSelectStrategy(strategy.id)
+                    onNavigate?.()
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    "focus-visible:ring-sidebar-ring outline-none focus-visible:ring-2",
+                    current
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  )}
+                >
+                  {strategy.label}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 
-export function AppNav() {
+export function AppNav({
+  strategies,
+  selectedStrategyId,
+  onSelectStrategy,
+}: {
+  strategies: Strategy[]
+  selectedStrategyId: string | null
+  onSelectStrategy: (strategyId: string) => void
+}) {
   const [open, setOpen] = useState(false)
   const [collapsed, setCollapsed] = usePersistentState(
     SIDEBAR_STORAGE_KEY,
     false
   )
+  const [screenerExpanded, setScreenerExpanded] = useState(true)
   const panelId = useId()
   const titleId = useId()
   const sidebarId = useId()
+  const desktopListId = useId()
+  const mobileListId = useId()
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -128,7 +179,16 @@ export function AppNav() {
           </Button>
         </div>
         <nav aria-label="Primary" className="flex-1 p-3">
-          <NavLinks collapsed={collapsed} />
+          <ScreenerNav
+            strategies={strategies}
+            selectedStrategyId={selectedStrategyId}
+            onSelectStrategy={onSelectStrategy}
+            collapsed={collapsed}
+            expanded={screenerExpanded}
+            listId={desktopListId}
+            onToggleExpanded={() => setScreenerExpanded((value) => !value)}
+            onExpandSidebar={() => setCollapsed(false)}
+          />
         </nav>
       </aside>
 
@@ -191,7 +251,15 @@ export function AppNav() {
               </Button>
             </div>
             <nav aria-label="Primary" className="flex-1 p-3">
-              <NavLinks onNavigate={() => setOpen(false)} />
+              <ScreenerNav
+                strategies={strategies}
+                selectedStrategyId={selectedStrategyId}
+                onSelectStrategy={onSelectStrategy}
+                expanded={screenerExpanded}
+                listId={mobileListId}
+                onToggleExpanded={() => setScreenerExpanded((value) => !value)}
+                onNavigate={() => setOpen(false)}
+              />
             </nav>
           </div>
         </div>

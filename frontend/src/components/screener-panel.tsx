@@ -3,6 +3,7 @@ import { Download, Loader2, Play, RefreshCw, Search } from "lucide-react"
 
 import { ColumnVisibilityMenu } from "@/components/column-visibility-menu"
 import { ScreenerResultsTable } from "@/components/screener-results-table"
+import { TablePagination } from "@/components/table-pagination"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -15,15 +16,21 @@ import {
   type ResultView,
   type ScreenerResults,
   type ScreenerRun,
+  type Strategy,
 } from "@/lib/screener-api"
-import { DEFAULT_VISIBLE_COLUMNS } from "@/lib/screener-columns"
+import {
+  compareValues,
+  defaultVisibleColumns,
+} from "@/lib/screener-columns"
 import { usePersistentState } from "@/lib/use-persistent-state"
 import { cn } from "@/lib/utils"
 
-const COLUMNS_STORAGE_KEY = "qq.discover.columns"
 const POLL_INTERVAL_MS = 3000
 /** The API always returns this window; it is not configurable per request. */
 const HISTORY_DAYS = 14
+const PAGE_SIZE = 100
+
+type SortDirection = "asc" | "desc"
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong."
@@ -68,7 +75,11 @@ function StatusPill({ run }: { run: ScreenerRun }) {
   )
 }
 
-export function DiscoverScreener() {
+export function ScreenerPanel({ strategy }: { strategy: Strategy }) {
+  const strategyId = strategy.id
+  const columnsKey = `qq.screener.columns.${strategyId}`
+  const fallbackColumns = defaultVisibleColumns(strategyId)
+
   const [runs, setRuns] = useState<ScreenerRun[]>([])
   const [runsError, setRunsError] = useState<string | null>(null)
   const [runsLoading, setRunsLoading] = useState(true)
@@ -78,14 +89,17 @@ export function DiscoverScreener() {
   const [runError, setRunError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
 
-  const [view, setView] = useState<ResultView>("candidates")
+  const [view, setView] = useState<ResultView>(strategy.defaultView)
   const [results, setResults] = useState<ScreenerResults | null>(null)
   const [resultsLoading, setResultsLoading] = useState(false)
   const [resultsError, setResultsError] = useState<string | null>(null)
 
   const [search, setSearch] = useState("")
   const [visibleColumns, setVisibleColumns, resetVisibleColumns] =
-    usePersistentState<string[]>(COLUMNS_STORAGE_KEY, DEFAULT_VISIBLE_COLUMNS)
+    usePersistentState<string[] | null>(columnsKey, fallbackColumns)
+  const [sortColumn, setSortColumn] = useState<string | null>(null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
+  const [page, setPage] = useState(1)
 
   const searchId = useId()
   const historyId = useId()
@@ -93,7 +107,7 @@ export function DiscoverScreener() {
   const refreshRuns = useCallback(async (autoSelect: boolean) => {
     setRunsLoading(true)
     try {
-      const list = await listRuns()
+      const list = await listRuns(strategyId)
       setRuns(list)
       setRunsError(null)
       if (autoSelect && list.length > 0) {
@@ -104,7 +118,7 @@ export function DiscoverScreener() {
     } finally {
       setRunsLoading(false)
     }
-  }, [])
+  }, [strategyId])
 
   useEffect(() => {
     void refreshRuns(true)
@@ -122,7 +136,7 @@ export function DiscoverScreener() {
 
     const poll = async () => {
       try {
-        const detail = await getRun(selectedRunId, controller.signal)
+        const detail = await getRun(strategyId, selectedRunId, controller.signal)
         if (cancelled) return
         setRun(detail)
         setRunError(null)
@@ -149,7 +163,7 @@ export function DiscoverScreener() {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [selectedRunId, refreshRuns])
+  }, [strategyId, selectedRunId, refreshRuns])
 
   const runStatus = run?.status
   useEffect(() => {
@@ -161,7 +175,7 @@ export function DiscoverScreener() {
     const controller = new AbortController()
     setResultsLoading(true)
 
-    getResults(selectedRunId, view, controller.signal)
+    getResults(strategyId, selectedRunId, view, controller.signal)
       .then((payload) => {
         setResults(payload)
         setResultsError(null)
@@ -176,7 +190,7 @@ export function DiscoverScreener() {
       })
 
     return () => controller.abort()
-  }, [selectedRunId, runStatus, view])
+  }, [strategyId, selectedRunId, runStatus, view])
 
   // The API allows one run at a time and answers 409 otherwise, so the button
   // stays disabled while any known run is still in flight.
@@ -189,7 +203,7 @@ export function DiscoverScreener() {
   async function handleStartRun() {
     setStarting(true)
     try {
-      const created = await startRun()
+      const created = await startRun(strategyId)
       setRuns((current) => [
         created,
         ...current.filter((item) => item.id !== created.id),
@@ -206,10 +220,10 @@ export function DiscoverScreener() {
   }
 
   const availableColumns = useMemo(() => results?.columns ?? [], [results])
-  const displayColumns = useMemo(
-    () => availableColumns.filter((column) => visibleColumns.includes(column)),
-    [availableColumns, visibleColumns]
-  )
+  const displayColumns = useMemo(() => {
+    if (visibleColumns === null) return availableColumns
+    return availableColumns.filter((column) => visibleColumns.includes(column))
+  }, [availableColumns, visibleColumns])
 
   const filteredRows = useMemo(() => {
     const rows = results?.rows ?? []
@@ -222,6 +236,50 @@ export function DiscoverScreener() {
         .includes(query)
     })
   }, [results, search])
+
+  const sortedRows = useMemo(() => {
+    if (!sortColumn) return filteredRows
+    const factor = sortDirection === "asc" ? 1 : -1
+    return [...filteredRows].sort((a, b) => {
+      const left = a[sortColumn]
+      const right = b[sortColumn]
+      const leftMissing = left === null || left === undefined || left === ""
+      const rightMissing = right === null || right === undefined || right === ""
+
+      if (leftMissing && rightMissing) return 0
+      if (leftMissing) return 1
+      if (rightMissing) return -1
+      return compareValues(left, right) * factor
+    })
+  }, [filteredRows, sortColumn, sortDirection])
+
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE))
+  const pageRows = sortedRows.slice(
+    (page - 1) * PAGE_SIZE,
+    page * PAGE_SIZE
+  )
+
+  useEffect(() => {
+    setPage(1)
+  }, [view, search, selectedRunId, sortColumn, sortDirection])
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount)
+  }, [page, pageCount])
+
+  function toggleSort(column: string) {
+    if (column !== sortColumn) {
+      setSortColumn(column)
+      setSortDirection("asc")
+      return
+    }
+    if (sortDirection === "asc") {
+      setSortDirection("desc")
+      return
+    }
+    setSortColumn(null)
+    setSortDirection("asc")
+  }
 
   const totalRows = results?.rowCount ?? 0
 
@@ -301,7 +359,9 @@ export function DiscoverScreener() {
               <StatusPill run={run} />
               {run.status === "succeeded" ? (
                 <span className="text-muted-foreground tabular-nums">
-                  {run.passed ?? 0} candidates / {run.scored ?? 0} scored
+                  {run.passed != null
+                    ? `${run.passed} candidates / ${run.scored ?? 0} scored`
+                    : `${run.scored ?? 0} tickers`}
                   {run.skipped ? ` · ${run.skipped} skipped` : ""}
                 </span>
               ) : null}
@@ -345,28 +405,30 @@ export function DiscoverScreener() {
             ) : null}
           </h2>
 
-          <div
-            role="group"
-            aria-label="Result view"
-            className="border-input flex overflow-hidden rounded-md border"
-          >
-            {(["candidates", "all"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={view === option}
-                onClick={() => setView(option)}
-                className={cn(
-                  "focus-visible:ring-ring px-3 py-1.5 text-sm capitalize outline-none focus-visible:ring-2",
-                  view === option
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-accent"
-                )}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
+          {strategy.views.length > 1 ? (
+            <div
+              role="group"
+              aria-label="Result view"
+              className="border-input flex overflow-hidden rounded-md border"
+            >
+              {strategy.views.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={view === option}
+                  onClick={() => setView(option)}
+                  className={cn(
+                    "focus-visible:ring-ring px-3 py-1.5 text-sm capitalize outline-none focus-visible:ring-2",
+                    view === option
+                      ? "bg-primary text-primary-foreground"
+                      : "hover:bg-accent"
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           <div className="relative w-full sm:w-56">
             <label htmlFor={searchId} className="sr-only">
@@ -387,19 +449,26 @@ export function DiscoverScreener() {
 
           <ColumnVisibilityMenu
             columns={availableColumns}
-            visibleColumns={visibleColumns}
+            visibleColumns={visibleColumns ?? availableColumns}
             onReset={resetVisibleColumns}
             onToggle={(column, visible) =>
-              setVisibleColumns((current) =>
-                visible
-                  ? [...current, column]
-                  : current.filter((item) => item !== column)
-              )
+              setVisibleColumns((current) => {
+                const base = current ?? availableColumns
+                return visible
+                  ? base.includes(column)
+                    ? base
+                    : [...base, column]
+                  : base.filter((item) => item !== column)
+              })
             }
           />
 
           <a
-            href={selectedRunId ? downloadUrl(selectedRunId, view) : undefined}
+            href={
+              selectedRunId
+                ? downloadUrl(strategyId, selectedRunId, view)
+                : undefined
+            }
             aria-disabled={!results}
             className={cn(
               buttonVariants({ variant: "outline", size: "sm" }),
@@ -438,7 +507,10 @@ export function DiscoverScreener() {
           ) : results ? (
             <ScreenerResultsTable
               columns={displayColumns}
-              rows={filteredRows}
+              rows={pageRows}
+              sortColumn={sortColumn}
+              sortDirection={sortDirection}
+              onToggleSort={toggleSort}
               emptyMessage={
                 search
                   ? `No tickers match “${search}”.`
@@ -453,6 +525,15 @@ export function DiscoverScreener() {
             </p>
           )}
         </div>
+        {results ? (
+          <TablePagination
+            page={page}
+            pageCount={pageCount}
+            totalRows={sortedRows.length}
+            pageSize={PAGE_SIZE}
+            onPageChange={setPage}
+          />
+        ) : null}
       </section>
     </div>
   )

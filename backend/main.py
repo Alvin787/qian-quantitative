@@ -5,13 +5,13 @@ from backend.utils.data import get_data, get_sentiment
 from backend.utils.indicators import calculate_indicators
 from backend.utils.scoring import evaluate_signals, classify_signal
 from backend.utils.youtubeSentiment import YouTubeSentimentAnalyzer
-from backend.screener.router import router as hybrid_screener_router
+from backend.screener.router import router as screener_router
 import pandas as pd
 
 load_dotenv()
 
 app = FastAPI()
-app.include_router(hybrid_screener_router)
+app.include_router(screener_router)
 
 @app.get("/analyze/{ticker}")
 async def analyze(ticker: str):

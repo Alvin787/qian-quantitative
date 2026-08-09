@@ -1,4 +1,3 @@
-import { useMemo, useState } from "react"
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react"
 
 import { StatusBadge } from "@/components/status-badge"
@@ -20,19 +19,17 @@ import type { ResultRow } from "@/lib/screener-api"
 import {
   columnDescription,
   columnLabel,
-  compareValues,
   formatValue,
   statusBadgeFor,
 } from "@/lib/screener-columns"
 import { cn } from "@/lib/utils"
 
-type SortDirection = "asc" | "desc"
-
-const DELIMITED_COLUMNS = new Set(["fail_reasons", "warnings"])
+const DELIMITED_COLUMNS = new Set(["fail_reasons", "warnings", "source_screens"])
 const LEFT_ALIGNED_COLUMNS = new Set([
   "ticker",
   "fail_reasons",
   "warnings",
+  "source_screens",
   "industry",
 ])
 
@@ -50,7 +47,7 @@ function DelimitedPills({
   variant,
 }: {
   value: string
-  variant: "failure" | "warning"
+  variant: "failure" | "warning" | "neutral"
 }) {
   const items = value
     .split(";")
@@ -75,7 +72,9 @@ function DelimitedPills({
             "inline-flex rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
             variant === "failure"
               ? "bg-red-500/15 text-red-700 dark:bg-red-500/20 dark:text-red-300"
-              : "bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+              : variant === "warning"
+                ? "bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
+                : "bg-muted text-muted-foreground"
           )}
         >
           {decodeDisplayText(item)}
@@ -106,44 +105,17 @@ export function ScreenerResultsTable({
   columns,
   rows,
   emptyMessage = "No rows match the current filters.",
+  sortColumn,
+  sortDirection,
+  onToggleSort,
 }: {
   columns: string[]
   rows: ResultRow[]
   emptyMessage?: string
+  sortColumn: string | null
+  sortDirection: "asc" | "desc"
+  onToggleSort: (column: string) => void
 }) {
-  const [sortColumn, setSortColumn] = useState<string | null>(null)
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc")
-
-  const sortedRows = useMemo(() => {
-    if (!sortColumn) return rows
-    const factor = sortDirection === "asc" ? 1 : -1
-    return [...rows].sort((a, b) => {
-      const left = a[sortColumn]
-      const right = b[sortColumn]
-      const leftMissing = left === null || left === undefined || left === ""
-      const rightMissing = right === null || right === undefined || right === ""
-
-      if (leftMissing && rightMissing) return 0
-      if (leftMissing) return 1
-      if (rightMissing) return -1
-      return compareValues(left, right) * factor
-    })
-  }, [rows, sortColumn, sortDirection])
-
-  function toggleSort(column: string) {
-    if (column !== sortColumn) {
-      setSortColumn(column)
-      setSortDirection("asc")
-      return
-    }
-    if (sortDirection === "asc") {
-      setSortDirection("desc")
-      return
-    }
-    setSortColumn(null)
-    setSortDirection("asc")
-  }
-
   if (columns.length === 0) {
     return (
       <p className="text-muted-foreground p-6 text-sm">
@@ -164,7 +136,7 @@ export function ScreenerResultsTable({
               const sortButton = (
                 <button
                   type="button"
-                  onClick={() => toggleSort(column)}
+                  onClick={() => onToggleSort(column)}
                   className={cn(
                     "focus-visible:ring-ring flex w-full items-center gap-0.5 px-2 py-1.5 text-left font-medium outline-none focus-visible:ring-2",
                     centered && "justify-center text-center",
@@ -221,7 +193,7 @@ export function ScreenerResultsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sortedRows.length === 0 ? (
+          {rows.length === 0 ? (
             <TableRow>
               <TableCell
                 colSpan={columns.length}
@@ -231,7 +203,7 @@ export function ScreenerResultsTable({
               </TableCell>
             </TableRow>
           ) : (
-            sortedRows.map((row, index) => (
+            rows.map((row, index) => (
               <TableRow key={String(row.ticker ?? index)}>
                 {columns.map((column) => {
                   const value = row[column]
@@ -261,7 +233,13 @@ export function ScreenerResultsTable({
                       {isDelimited && typeof value === "string" ? (
                         <DelimitedPills
                           value={value}
-                          variant={column === "warnings" ? "warning" : "failure"}
+                          variant={
+                            column === "warnings"
+                              ? "warning"
+                              : column === "source_screens"
+                                ? "neutral"
+                                : "failure"
+                          }
                         />
                       ) : tickerUrl ? (
                         <a

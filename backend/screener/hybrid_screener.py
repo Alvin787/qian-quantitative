@@ -62,15 +62,16 @@ Still manual after this script (cannot be automated from price data)
 from __future__ import annotations
 
 import argparse
-import html as html_lib
 import math
 import re
 import sys
 import time
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+from backend.screener.finviz import scrape_finviz
+from backend.screener.screens import get_screen
 
 try:
     import numpy as np
@@ -84,13 +85,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Defaults — your Screener A URL
 # ---------------------------------------------------------------------------
-DEFAULT_FINVIZ_URL = (
-    "https://finviz.com/screener?v=111"
-    "&f=cap_midover,geo_usa,sh_avgvol_o1000,sh_price_o5,"
-    "ta_perf_13wup,ta_perf2_26wup,ta_sma20_pb,ta_sma200_sb50,"
-    "ta_sma50_pa,ta_volatility_mo2"
-    "&ft=4&o=change&preset=s151691954"
-)
+DEFAULT_FINVIZ_URL = get_screen("reversal_pullback").url
 
 # Hybrid thresholds (from hybrid-buy-the-dip-strategy.md Appendix A / §3)
 ADR_MIN = 2.0
@@ -129,81 +124,6 @@ INDEX_EXT_EXTREME = 6.0
 
 # Optional hard-exclude by Finviz industry string (substring match, case-insensitive)
 BIOTECH_INDUSTRY_SUBSTR = ("biotechnology", "biotech")
-
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/122.0.0.0 Safari/537.36"
-)
-
-
-# ---------------------------------------------------------------------------
-# Finviz scrape
-# ---------------------------------------------------------------------------
-def fetch_html(url: str) -> str:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read().decode("utf-8", errors="replace")
-
-
-def scrape_finviz(url: str, sleep_s: float = 0.35) -> list[str]:
-    """Paginate Finviz screener (&r=1,21,41,...) and return unique tickers."""
-    base = re.sub(r"&r=\d+", "", url)
-    ticker_re = re.compile(r'data-boxover-ticker="([A-Z0-9.\-]+)"')
-    industry_re = re.compile(
-        r'data-boxover-ticker="([A-Z0-9.\-]+)"[^>]*data-boxover-industry="([^"]*)"',
-        re.I,
-    )
-    total_re = re.compile(r"#(\d+)\s*/\s*(\d+)")
-
-    tickers: list[str] = []
-    industries: dict[str, str] = {}
-    reported_total: int | None = None
-
-    for start in range(1, 401, 20):
-        page_url = f"{base}&r={start}"
-        html = fetch_html(page_url)
-
-        page = ticker_re.findall(html)
-        seen_page: set[str] = set()
-        unique_page: list[str] = []
-        for t in page:
-            if t not in seen_page:
-                seen_page.add(t)
-                unique_page.append(t)
-
-        for m in industry_re.finditer(html):
-            industries[m.group(1)] = html_lib.unescape(m.group(2))
-
-        totals = total_re.findall(html)
-        if totals:
-            reported_total = max(int(b) for _, b in totals)
-
-        if not unique_page:
-            break
-
-        for t in unique_page:
-            if t not in tickers:
-                tickers.append(t)
-
-        print(f"  Finviz page r={start}: {len(unique_page)} names "
-              f"(running total {len(tickers)}"
-              + (f" / {reported_total}" if reported_total else "")
-              + ")")
-
-        if reported_total and len(tickers) >= reported_total:
-            break
-        time.sleep(sleep_s)
-
-    scrape_finviz.industries = industries  # type: ignore[attr-defined]
-    return tickers
 
 
 def load_tickers_file(path: Path) -> list[str]:
@@ -688,16 +608,13 @@ class ScreenerRunResult:
     regime_note: str | None = None
 
 
-def allocate_run_id(outdir: Path, when: datetime | None = None) -> str:
+def allocate_run_id(outdir: Path, when: datetime | None = None, *, filenames: tuple[str, ...] = ("hybrid_all_results_{run_id}.csv", "hybrid_candidates_{run_id}.csv", "hybrid_run_{run_id}.json")) -> str:
     """Return a collision-safe YYYY-MM-DD_HHMMSS id for paired CSV outputs."""
     outdir.mkdir(parents=True, exist_ok=True)
     stamp = when or datetime.now()
     while True:
         run_id = stamp.strftime(RUN_ID_FMT)
-        all_path = outdir / f"hybrid_all_results_{run_id}.csv"
-        cand_path = outdir / f"hybrid_candidates_{run_id}.csv"
-        meta_path = outdir / f"hybrid_run_{run_id}.json"
-        if not all_path.exists() and not cand_path.exists() and not meta_path.exists():
+        if all(not (outdir / name.format(run_id=run_id)).exists() for name in filenames):
             return run_id
         stamp = stamp.replace(microsecond=0) + timedelta(seconds=1)
 
@@ -752,8 +669,9 @@ def run_screener(
         print(f"\nLoaded {len(tickers)} tickers from {tickers_path}")
     else:
         print("\nScraping Finviz screener...")
-        tickers = scrape_finviz(url)
-        industries = getattr(scrape_finviz, "industries", {})
+        scraped = scrape_finviz(url)
+        tickers = scraped.tickers
+        industries = scraped.industries
         print(f"Finviz returned {len(tickers)} unique tickers")
 
     if not tickers:

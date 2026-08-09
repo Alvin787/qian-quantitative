@@ -2,19 +2,27 @@ import type { ResultValue } from "@/lib/screener-api"
 
 export type StatusTone = "positive" | "negative" | "neutral"
 
-export const DEFAULT_VISIBLE_COLUMNS = [
-  "ticker",
-  "pass_all",
-  "close",
-  "adr_pct",
-  "near_20_pct",
-  "rs_3m_pp",
-  "rs_6m_pp",
-  "extension_x",
-  "avg_dollar_vol_m",
-  "days_to_earnings",
-  "industry",
-]
+export const DEFAULT_VISIBLE_COLUMNS_BY_STRATEGY: Record<string, string[]> = {
+  reversal: [
+    "ticker",
+    "pass_all",
+    "close",
+    "adr_pct",
+    "near_20_pct",
+    "rs_3m_pp",
+    "rs_6m_pp",
+    "extension_x",
+    "avg_dollar_vol_m",
+    "days_to_earnings",
+    "industry",
+  ],
+  breakout: ["ticker", "industry", "screen_count", "source_screens"],
+}
+
+/** Returns the strategy's default column list, or null when the strategy has none (caller shows all available columns). */
+export function defaultVisibleColumns(strategyId: string): string[] | null {
+  return DEFAULT_VISIBLE_COLUMNS_BY_STRATEGY[strategyId] ?? null
+}
 
 const COLUMN_LABELS: Record<string, string> = {
   ticker: "Ticker",
@@ -44,6 +52,8 @@ const COLUMN_LABELS: Record<string, string> = {
   days_to_earnings: "Days to earnings",
   earnings_date: "Earnings date",
   industry: "Industry",
+  screen_count: "Screens",
+  source_screens: "Source screens",
   linear_r2: "Linear R²",
   volexp_ratio: "Vol expansion",
   pullback_depth_adr: "Pullback (ADR)",
@@ -111,6 +121,9 @@ const COLUMN_DESCRIPTIONS: Record<string, string> = {
   sma50: "50-day simple moving average, used for trend and extension checks.",
   sma200: "200-day simple moving average, used to confirm the primary trend.",
   industry: "Industry classification, used to identify sector-specific risks.",
+  screen_count:
+    "How many breakout screens surfaced this ticker. More screens means more overlapping setups.",
+  source_screens: "The breakout screens this ticker appeared in.",
   biotech: "Biotech names are excluded because binary trial and FDA events can overwhelm the setup.",
 }
 

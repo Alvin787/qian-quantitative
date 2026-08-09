@@ -11,11 +11,17 @@ qian-quantitative/
 │   ├── requirements.txt
 │   ├── utils/
 │   ├── screener/
+│   │   ├── finviz.py
+│   │   ├── screens.py
 │   │   ├── hybrid_screener.py
+│   │   ├── strategies/
+│   │   │   ├── base.py
+│   │   │   ├── reversal.py
+│   │   │   └── breakout.py
 │   │   └── screener_output/   # generated timestamped run CSVs (gitignored)
 │   ├── data/
 │   └── results/
-├── frontend/         # Vite + React UI (Discover home)
+├── frontend/         # Vite + React UI (Screener home)
 │   ├── package.json
 │   ├── vite.config.ts
 │   └── src/
@@ -26,25 +32,29 @@ qian-quantitative/
 
 Both apps live at the repository root. No `apps/` wrapper is required.
 
-## Discover
+## Screener
 
-The frontend home page is **Discover**: launch the hybrid pullback screener, browse recent runs, and inspect results before researching individual names.
+The sidebar **Screener** tab is the home page. Use the strategy dropdown to pick **Breakout** (first) or **Reversal** (second). A run scans only the Finviz screens that strategy declares. Only one run is active at a time across all strategies; the UI polls until completion, then selects the new result.
 
-- **Run Screener** starts a hybrid screener job asynchronously via the backend. Only one run is active at a time; the UI polls until completion, then selects the new result.
-- Results load as a table with an **All / Candidates** toggle (full universe vs. names that pass the automated gates).
-- **Ticker search** filters the table by ticker (case-insensitive).
-- **Run history** lists the last 14 days of completed runs (newest first); pick a prior run to reload its table.
+- **Reversal** is the hybrid pullback strategy: **All / Candidates** toggle, unchanged automated gates, ticker search, and the last 14 days of run history.
+- **Breakout** is currently a universe-only union of 12 screens. Rows expose `ticker`, `industry`, `screen_count`, and `source_screens`; there are no scoring criteria yet.
+- The results table paginates at **100 rows per page** (page indicator and previous/next).
 
-Each run writes a paired, collision-safe CSV set under `backend/screener/screener_output/`:
+### Screens
+
+All 13 Finviz screens live in `backend/screener/screens.py`. Strategies reference screens by id; adding a screen to a strategy is a one-line change to its `screen_ids`.
+
+Each run writes collision-safe CSVs under `backend/screener/screener_output/`:
 
 ```text
-hybrid_all_results_YYYY-MM-DD_HHMMSS.csv
-hybrid_candidates_YYYY-MM-DD_HHMMSS.csv
+hybrid_all_results_YYYY-MM-DD_HHMMSS.csv     # Reversal, all
+hybrid_candidates_YYYY-MM-DD_HHMMSS.csv      # Reversal, candidates
+breakout_all_results_YYYY-MM-DD_HHMMSS.csv   # Breakout, all
 ```
 
-These outputs (and related run metadata) are generated and local-only — gitignored; do not commit them.
+These outputs (and related run metadata JSON) are generated and local-only — gitignored; do not commit them.
 
-The Discover UI talks to `/api/screener/hybrid` on the FastAPI backend. In local development, the Vite proxy forwards those requests to `http://localhost:8000`, so both `make run-backend` and `make run-frontend` must be running.
+The Screener UI talks to `/api/screener/strategies` and `/api/screener/{strategy}/runs...` on the FastAPI backend. In local development, the Vite proxy forwards those requests to `http://localhost:8000`, so both `make run-backend` and `make run-frontend` must be running.
 
 ## Setup
 
@@ -71,27 +81,27 @@ The Discover UI talks to `/api/screener/hybrid` on the FastAPI backend. In local
 
 ## Run
 
-From the repository root (separate terminals):
+From the repository root, one terminal:
+
+```bash
+make run              # backend + frontend together (Ctrl+C stops both)
+```
+
+Or run them separately:
 
 ```bash
 make run-backend      # uvicorn backend.main:app on http://0.0.0.0:8000
 make run-frontend     # Vite dev server (proxies /api → backend)
 ```
 
-Equivalent without Make:
-
-```bash
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
-cd frontend && npm run dev
-```
-
-Open the Vite URL shown in the terminal; Discover is the home page.
+Open the Vite URL shown in the terminal; Screener is the home page.
 
 ## Build & lint
 
 ```bash
 make build            # production frontend build
 make lint             # backend compileall + frontend eslint
+make test-backend     # backend pytest suite
 ```
 
 ## Notes
