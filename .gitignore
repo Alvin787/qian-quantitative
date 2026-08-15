@@ -183,6 +183,8 @@ backend/results/
 backend/data/youtube_transcripts/
 backend/screener/*.csv
 backend/screener/screener_output/
+backend/diary/diary_data/
+backend/watchlists/watchlist_data/
 
 # Frontend dependencies and build artifacts
 frontend/node_modules/
@@ -190,3 +192,5 @@ frontend/dist/
 frontend/dist-ssr/
 
 .vscode/
+
+.agent/plans

@@ -169,7 +169,7 @@ export function columnDescription(column: string) {
   return COLUMN_DESCRIPTIONS[column]
 }
 
-function humanizeToken(value: string) {
+export function humanizeToken(value: string) {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase())

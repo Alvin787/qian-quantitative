@@ -61,7 +61,7 @@ function StatusPill({ run }: { run: ScreenerRun }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium",
         run.status === "succeeded" && "bg-emerald-500/10 text-emerald-600",
         run.status === "failed" && "bg-destructive/10 text-destructive",
         run.status === "running" && "bg-amber-500/10 text-amber-600"
@@ -287,7 +287,7 @@ export function ScreenerPanel({ strategy }: { strategy: Strategy }) {
     <div className="mx-auto flex w-full max-w-[110rem] flex-col gap-5 px-4 py-5 sm:px-6 lg:px-8">
       <section
         aria-labelledby="run-controls-heading"
-        className="border-border bg-muted/30 flex flex-col gap-3 rounded-xl border p-3 sm:p-4"
+        className="border-border bg-card/60 flex flex-col gap-3 rounded-xl border p-3 shadow-xs backdrop-blur-sm sm:p-4"
       >
         <h2 id="run-controls-heading" className="sr-only">
           Screener run controls
@@ -393,7 +393,7 @@ export function ScreenerPanel({ strategy }: { strategy: Strategy }) {
         <div className="flex flex-wrap items-center gap-2">
           <h2
             id="results-heading"
-            className="mr-auto text-base font-semibold tracking-tight"
+            className="display-tight mr-auto text-base font-semibold"
           >
             Results
             {results ? (
@@ -419,6 +419,8 @@ export function ScreenerPanel({ strategy }: { strategy: Strategy }) {
                   onClick={() => setView(option)}
                   className={cn(
                     "focus-visible:ring-ring px-3 py-1.5 text-sm capitalize outline-none focus-visible:ring-2",
+                    "transition-[color,background-color,transform] duration-[160ms] ease-[var(--ease-out)]",
+                    "active:scale-[0.98]",
                     view === option
                       ? "bg-primary text-primary-foreground"
                       : "hover:bg-accent"
@@ -480,7 +482,7 @@ export function ScreenerPanel({ strategy }: { strategy: Strategy }) {
           </a>
         </div>
 
-        <div className="border-border overflow-hidden rounded-xl border">
+        <div className="border-border bg-card/40 overflow-hidden rounded-xl border shadow-xs">
           {resultsError ? (
             <p role="alert" className="text-destructive p-6 text-sm">
               Could not load results: {resultsError}

@@ -1,0 +1,316 @@
+from __future__ import annotations
+
+import threading
+from dataclasses import replace
+from datetime import date, datetime, timezone
+from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
+
+import pandas as pd
+
+from backend.screener.strategies.breakout import BREAKOUT_SCREEN_IDS
+from backend.watchlists.gates import ny_today, score_history
+from backend.watchlists.store import FunnelState, Name, ReviewMeta, WatchlistStore
+
+if TYPE_CHECKING:
+    from backend.screener.run_service import ScreenerRunService
+
+_LOADER_TIMEOUT_S = 15
+
+
+def parse_source_screens(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        parts = [str(item).strip() for item in raw]
+        return [part for part in parts if part]
+    return [part.strip() for part in str(raw).split(";") if part.strip()]
+
+
+def _order_screens(screens: list[str]) -> list[str]:
+    known = [sid for sid in BREAKOUT_SCREEN_IDS if sid in screens]
+    leftovers = [sid for sid in screens if sid not in BREAKOUT_SCREEN_IDS]
+    return known + leftovers
+
+
+def _union_screens(existing: list[str], incoming: list[str]) -> list[str]:
+    combined = list(existing)
+    for sid in incoming:
+        if sid not in combined:
+            combined.append(sid)
+    return _order_screens(combined)
+
+
+def ingest_breakout_rows(
+    state: FunnelState, rows: list[dict], *, added_at: str
+) -> tuple[FunnelState, set[str]]:
+    names = [replace(name, source_screens=list(name.source_screens)) for name in state.names]
+    by_ticker = {name.ticker: name for name in names}
+    added: set[str] = set()
+    for row in rows:
+        ticker = str(row.get("ticker", "")).strip().upper()
+        if not ticker:
+            continue
+        screens = parse_source_screens(row.get("source_screens"))
+        industry = str(row.get("industry") or "")
+        existing = by_ticker.get(ticker)
+        if existing is None:
+            name = Name(
+                ticker=ticker,
+                list="master",
+                added_at=added_at,
+                source_screens=_order_screens(screens),
+                industry=industry,
+                readiness="unscored",
+            )
+            names.append(name)
+            by_ticker[ticker] = name
+            added.add(ticker)
+        else:
+            existing.source_screens = _union_screens(existing.source_screens, screens)
+            if not existing.industry and industry:
+                existing.industry = industry
+    return replace(state, names=names), added
+
+
+def queue_reason(*, readiness: str, list_name: str, newly_ingested: bool) -> str | None:
+    if newly_ingested:
+        return "new_ingest"
+    if readiness == "disrupted" and list_name != "back":
+        return "disrupted"
+    if readiness == "unknown":
+        return "score_failed"
+    if readiness == "focus_ready" and list_name in {"master", "stalk"}:
+        return "focus_ready"
+    if readiness == "earnings_blocked" and list_name in {"stalk", "focus"}:
+        return "earnings_blocked"
+    if readiness == "stalk_ready" and list_name == "master":
+        return "stalk_ready"
+    return None
+
+
+def apply_review(
+    store: WatchlistStore,
+    scored: list[Name],
+    *,
+    review: ReviewMeta,
+) -> FunnelState:
+    return store.apply_review(scored, review=review)
+
+
+def _timeout_call(fn, *args):
+    holder: dict[str, object] = {}
+
+    def runner() -> None:
+        try:
+            holder["value"] = fn(*args)
+        except Exception as exc:  # noqa: BLE001 — timeout wrapper maps errors to None
+            holder["error"] = exc
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join(_LOADER_TIMEOUT_S)
+    if thread.is_alive() or "error" in holder:
+        return None
+    return holder.get("value")
+
+
+def _yf_history(ticker: str) -> pd.DataFrame | None:
+    import yfinance as yf
+
+    frame = yf.Ticker(ticker).history(period="1y", auto_adjust=False)
+    if frame is None or frame.empty:
+        return None
+    missing = [col for col in ("Open", "High", "Low", "Close", "Volume") if col not in frame.columns]
+    if missing:
+        return None
+    out = frame.loc[:, ["Open", "High", "Low", "Close", "Volume"]].copy()
+    out.index = pd.DatetimeIndex(out.index)
+    return out
+
+
+def _yf_earnings(ticker: str) -> date | None:
+    import yfinance as yf
+
+    calendar = yf.Ticker(ticker).calendar
+    raw = None
+    if isinstance(calendar, dict):
+        raw = calendar.get("Earnings Date") or calendar.get("earningsDate")
+        if isinstance(raw, (list, tuple)) and raw:
+            raw = raw[0]
+    elif isinstance(calendar, pd.DataFrame) and not calendar.empty:
+        if "Earnings Date" in calendar.index:
+            raw = calendar.loc["Earnings Date"].iloc[0]
+        elif "Earnings Date" in calendar.columns:
+            raw = calendar["Earnings Date"].iloc[0]
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    if isinstance(raw, pd.Timestamp):
+        return raw.date()
+    return None
+
+
+def _default_load_history(ticker: str) -> pd.DataFrame | None:
+    return _timeout_call(_yf_history, ticker)
+
+
+def _default_load_spy() -> pd.DataFrame | None:
+    return _timeout_call(_yf_history, "SPY")
+
+
+def _default_load_earnings(ticker: str) -> date | None:
+    return _timeout_call(_yf_earnings, ticker)
+
+
+class WatchlistReviewService:
+    def __init__(
+        self,
+        store: WatchlistStore,
+        *,
+        screener: ScreenerRunService | None = None,
+        load_history=None,
+        load_spy=None,
+        load_earnings=None,
+    ) -> None:
+        self.store = store
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        if screener is None:
+            from backend.screener.run_service import screener_run_service
+
+            screener = screener_run_service
+        self.screener = screener
+        self._load_history = load_history if load_history is not None else _default_load_history
+        self._load_spy = load_spy if load_spy is not None else _default_load_spy
+        self._load_earnings = load_earnings if load_earnings is not None else _default_load_earnings
+        self.reconcile_stale()
+
+    def _thread_live(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def reconcile_stale(self) -> None:
+        if self._thread_live():
+            return
+        with self.store._lock:
+            state = self.store._get_unlocked()
+            if state.review.status != "running":
+                return
+            state.review.status = "failed"
+            state.review.error = "interrupted by restart"
+            state.review.finished_at = datetime.now(timezone.utc).isoformat()
+            self.store._put_unlocked(state)
+
+    def get_review(self, review_id: str) -> ReviewMeta | None:
+        review = self.store.get().review
+        if review.review_id == review_id:
+            return review
+        return None
+
+    def start_review(self) -> ReviewMeta:
+        with self._lock:
+            with self.store._lock:
+                state = self.store._get_unlocked()
+                if self._thread_live() or state.review.status == "running":
+                    raise RuntimeError("Review already in progress")
+                review_id = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+                review = ReviewMeta(
+                    review_id=review_id,
+                    status="running",
+                    started_at=datetime.now(timezone.utc).isoformat(),
+                    finished_at=None,
+                    ingested=None,
+                    scored=None,
+                    unknown=None,
+                    error=None,
+                    notes=None,
+                    breakout_run_id=None,
+                )
+                state.review = review
+                self.store._put_unlocked(state)
+            thread = threading.Thread(
+                target=self._worker,
+                args=(review.review_id,),
+                name=f"watchlist-review-{review.review_id}",
+                daemon=True,
+            )
+            self._thread = thread
+            thread.start()
+            return review
+
+    def _breakout_rows(self) -> tuple[list[dict], str | None, str | None]:
+        runs = self.screener.list_runs("breakout")
+        completed = next((row for row in runs if row.get("status") == "completed"), None)
+        if completed is None:
+            return [], "no completed breakout run", None
+        run_id = completed["run_id"]
+        _meta, _columns, rows = self.screener.load_results("breakout", run_id, "all")
+        return rows, None, run_id
+
+    def _score_name(self, name: Name, spy_history, today: date, newly: set[str]) -> Name:
+        history = self._load_history(name.ticker)
+        earnings = self._load_earnings(name.ticker)
+        result = score_history(
+            industry=name.industry,
+            history=history,
+            spy_history=spy_history,
+            earnings_date=earnings,
+            today=today,
+        )
+        return replace(
+            name,
+            readiness=result.readiness,
+            queue_reason=queue_reason(
+                readiness=result.readiness,
+                list_name=name.list,
+                newly_ingested=name.ticker in newly,
+            ),
+            fail_reasons=result.fail_reasons,
+            gates=result.gates,
+            last_scored_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def _mark_failed(self, review_id: str | None, error: str) -> None:
+        finished = datetime.now(timezone.utc).isoformat()
+        with self.store._lock:
+            state = self.store._get_unlocked()
+            if state.review.review_id != review_id:
+                return
+            state.review.status = "failed"
+            state.review.error = error
+            state.review.finished_at = finished
+            self.store._put_unlocked(state)
+
+    def _worker(self, review_id: str) -> None:
+        try:
+            rows, notes, breakout_run_id = self._breakout_rows()
+            added_at = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+            with self.store._lock:
+                current = self.store._get_unlocked()
+                ingested, newly = ingest_breakout_rows(current, rows, added_at=added_at)
+                self.store._put_unlocked(ingested)
+            snapshot = self.store.get()
+            spy_history = self._load_spy()
+            today = ny_today()
+            scored = [self._score_name(name, spy_history, today, newly) for name in snapshot.names]
+            unknown = sum(1 for name in scored if name.readiness == "unknown")
+            review = ReviewMeta(
+                review_id=review_id,
+                status="completed",
+                started_at=snapshot.review.started_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                ingested=len(newly),
+                scored=len(scored),
+                unknown=unknown,
+                error=None,
+                notes=notes,
+                breakout_run_id=breakout_run_id,
+            )
+            apply_review(self.store, scored, review=review)
+        except Exception as exc:  # noqa: BLE001 — persist any worker failure
+            self._mark_failed(review_id, str(exc))
+        finally:
+            with self._lock:
+                if self._thread is threading.current_thread():
+                    self._thread = None

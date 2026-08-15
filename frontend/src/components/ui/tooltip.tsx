@@ -40,6 +40,7 @@ function TooltipContent({
         className={cn(
           "bg-foreground text-background z-50 max-w-72 rounded-md px-3 py-2 text-xs leading-relaxed shadow-md",
           "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "duration-[125ms] ease-[var(--ease-out)]",
           className
         )}
         {...props}

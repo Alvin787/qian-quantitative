@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react"
 
 import { StatusBadge } from "@/components/status-badge"
+import { DelimitedPills, decodeDisplayText } from "@/components/token-pills"
 import {
   Table,
   TableBody,
@@ -22,6 +23,7 @@ import {
   formatValue,
   statusBadgeFor,
 } from "@/lib/screener-columns"
+import { tradingViewUrl } from "@/lib/tradingview"
 import { cn } from "@/lib/utils"
 
 const DELIMITED_COLUMNS = new Set(["fail_reasons", "warnings", "source_screens"])
@@ -33,72 +35,11 @@ const LEFT_ALIGNED_COLUMNS = new Set([
   "industry",
 ])
 
-function decodeDisplayText(value: string) {
-  return value
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-}
-
-function DelimitedPills({
-  value,
-  variant,
-}: {
-  value: string
-  variant: "failure" | "warning" | "neutral"
-}) {
-  const items = value
-    .split(";")
-    .map((item) => item.trim())
-    .filter(Boolean)
-
-  if (items.length === 0) return <span className="text-muted-foreground">—</span>
-
-  return (
-    <div
-      className={cn(
-        "flex gap-1",
-        variant === "warning"
-          ? "max-w-[20rem] flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          : "flex-wrap"
-      )}
-    >
-      {items.map((item, index) => (
-        <span
-          key={`${item}-${index}`}
-          className={cn(
-            "inline-flex rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap",
-            variant === "failure"
-              ? "bg-red-500/15 text-red-700 dark:bg-red-500/20 dark:text-red-300"
-              : variant === "warning"
-                ? "bg-amber-500/15 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
-                : "bg-muted text-muted-foreground"
-          )}
-        >
-          {decodeDisplayText(item)}
-        </span>
-      ))}
-    </div>
+function rowTradingViewUrl(row: ResultRow) {
+  return tradingViewUrl(
+    String(row.ticker ?? row.symbol ?? ""),
+    String(row.exchange ?? "")
   )
-}
-
-function tradingViewUrl(row: ResultRow) {
-  const ticker = String(row.ticker ?? row.symbol ?? "").trim().toUpperCase()
-  if (!ticker) return null
-
-  const rawExchange = String(row.exchange ?? "").trim().toUpperCase()
-  const exchangeAliases: Record<string, string> = {
-    NMS: "NASDAQ",
-    NAS: "NASDAQ",
-    NYQ: "NYSE",
-    ASE: "AMEX",
-  }
-  const exchange = exchangeAliases[rawExchange] ?? rawExchange
-  const symbol = exchange ? `${exchange}-${ticker}` : ticker
-
-  return `https://www.tradingview.com/symbols/${encodeURIComponent(symbol)}/`
 }
 
 export function ScreenerResultsTable({
@@ -210,7 +151,8 @@ export function ScreenerResultsTable({
                   const badge = statusBadgeFor(value ?? null, column)
                   const isDelimited = DELIMITED_COLUMNS.has(column)
                   const centered = !LEFT_ALIGNED_COLUMNS.has(column)
-                  const tickerUrl = column === "ticker" ? tradingViewUrl(row) : null
+                  const tickerUrl =
+                    column === "ticker" ? rowTradingViewUrl(row) : null
                   return (
                     <TableCell
                       key={column}
