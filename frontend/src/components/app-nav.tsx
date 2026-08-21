@@ -3,6 +3,7 @@ import { Dialog } from "@base-ui/react/dialog"
 import {
   BookOpen,
   ChevronDown,
+  CircleDollarSign,
   ListFilter,
   Menu,
   PanelLeftClose,
@@ -20,7 +21,7 @@ import { cn } from "@/lib/utils"
 
 const SIDEBAR_STORAGE_KEY = "qq.sidebar.collapsed"
 
-export type AppTab = "screener" | "diary" | "positions" | "watchlists"
+export type AppTab = "screener" | "diary" | "positions" | "pnl" | "watchlists"
 
 function ScreenerNav({
   strategies,
@@ -243,6 +244,48 @@ function PositionsNavButton({
   )
 }
 
+function PnlNavButton({
+  active,
+  collapsed = false,
+  onSelect,
+  onExpandSidebar,
+  onNavigate,
+}: {
+  active: boolean
+  collapsed?: boolean
+  onSelect: () => void
+  onExpandSidebar?: () => void
+  onNavigate?: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={active ? "page" : undefined}
+      title={collapsed ? "PnL" : undefined}
+      onClick={() => {
+        if (collapsed) {
+          onExpandSidebar?.()
+        }
+        onSelect()
+        onNavigate?.()
+      }}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium",
+        "transition-[color,background-color,transform] duration-[160ms] ease-[var(--ease-out)]",
+        "active:scale-[0.98]",
+        "focus-visible:ring-sidebar-ring outline-none focus-visible:ring-2",
+        collapsed && "justify-center px-0",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      )}
+    >
+      <CircleDollarSign className="size-4 shrink-0" aria-hidden />
+      <span className={cn(collapsed && "sr-only")}>PnL</span>
+    </button>
+  )
+}
+
 export function AppNav({
   strategies,
   selectedStrategyId,
@@ -344,6 +387,12 @@ export function AppNav({
             onSelect={() => onSelectTab("positions")}
             onExpandSidebar={() => setCollapsed(false)}
           />
+          <PnlNavButton
+            active={activeTab === "pnl"}
+            collapsed={collapsed}
+            onSelect={() => onSelectTab("pnl")}
+            onExpandSidebar={() => setCollapsed(false)}
+          />
         </nav>
       </aside>
 
@@ -425,6 +474,11 @@ export function AppNav({
                 <PositionsNavButton
                   active={activeTab === "positions"}
                   onSelect={() => onSelectTab("positions")}
+                  onNavigate={() => setOpen(false)}
+                />
+                <PnlNavButton
+                  active={activeTab === "pnl"}
+                  onSelect={() => onSelectTab("pnl")}
                   onNavigate={() => setOpen(false)}
                 />
               </nav>

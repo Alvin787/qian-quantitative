@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 import { AppNav, type AppTab } from "@/components/app-nav"
 import { DiaryPanel } from "@/components/diary-panel"
+import { PnlPanel } from "@/components/pnl-panel"
 import { PositionsPanel } from "@/components/positions-panel"
 import { ScreenerPanel } from "@/components/screener-panel"
 import { WatchlistsPanel } from "@/components/watchlists-panel"
@@ -28,6 +29,7 @@ export default function App() {
       screener: activeTab === "screener",
       diary: activeTab === "diary",
       positions: activeTab === "positions",
+      pnl: activeTab === "pnl",
       watchlists: activeTab === "watchlists",
     })
   )
@@ -83,7 +85,9 @@ export default function App() {
                   ? "Market Diary"
                   : activeTab === "positions"
                     ? "Position Management"
-                    : (activeStrategy?.label ?? "Screener")}
+                    : activeTab === "pnl"
+                      ? "PnL Tracker"
+                      : (activeStrategy?.label ?? "Screener")}
             </h1>
             {activeTab === "screener" ? (
               <p className="text-muted-foreground text-xs tracking-wide">
@@ -96,6 +100,10 @@ export default function App() {
             ) : activeTab === "watchlists" ? (
               <p className="text-muted-foreground text-xs tracking-wide">
                 Master, stalk, focus, back
+              </p>
+            ) : activeTab === "pnl" ? (
+              <p className="text-muted-foreground text-xs tracking-wide">
+                Trade ledger and realized PnL
               </p>
             ) : (
               <p className="text-muted-foreground text-xs tracking-wide">
@@ -120,6 +128,11 @@ export default function App() {
           {mountedTabs.positions ? (
             <div hidden={activeTab !== "positions"}>
               <PositionsPanel />
+            </div>
+          ) : null}
+          {mountedTabs.pnl ? (
+            <div hidden={activeTab !== "pnl"}>
+              <PnlPanel />
             </div>
           ) : null}
           {mountedTabs.screener ? (
