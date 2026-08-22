@@ -105,8 +105,11 @@ def test_diary_watchlists_still_empty_on_fresh_store(tmp_path: Path):
         diary_router.set_store(previous)
 
 
-def _ohlcv(n: int = 70) -> pd.DataFrame:
-    idx = pd.bdate_range("2026-01-02", periods=n)
+FROZEN = date(2026, 8, 14)
+
+
+def _ohlcv(n: int = 70, *, end: str | None = None) -> pd.DataFrame:
+    idx = pd.bdate_range(end=end, periods=n) if end is not None else pd.bdate_range("2026-01-02", periods=n)
     close = 100.0 + 0.5 * np.arange(n, dtype=float)
     return pd.DataFrame(
         {
@@ -123,14 +126,23 @@ def _ohlcv(n: int = 70) -> pd.DataFrame:
 class StubScreener:
     def __init__(self, rows=None, runs=None) -> None:
         self.rows = list(rows or [])
-        self.runs = list(runs) if runs is not None else []
+        self.runs = (
+            list(runs)
+            if runs is not None
+            else [{"run_id": "run-1", "status": "completed", "as_of_session": "2026-08-14"}]
+        )
 
     def list_runs(self, strategy_id: str, *, days: int = 14) -> list[dict]:
         return list(self.runs)
 
     def load_results(self, strategy_id, run_id, view) -> tuple[dict, list[str], list[dict]]:
         return (
-            {"run_id": run_id, "status": "completed"},
+            {
+                "run_id": run_id,
+                "status": "completed",
+                "as_of_session": "2026-08-14",
+                "scored": len(self.rows),
+            },
             ["ticker", "industry", "source_screens"],
             self.rows,
         )
@@ -146,7 +158,17 @@ def wait_review_api(client: TestClient, review_id: str, timeout: float = 2.0):
     raise AssertionError(f"review {review_id} did not finish")
 
 
-def _install_review(tmp_path: Path, *, screener, load_history, load_spy, load_earnings):
+def _install_review(
+    tmp_path: Path,
+    *,
+    screener,
+    load_history,
+    load_spy,
+    load_earnings,
+    today=None,
+    expected_session=None,
+    load_history_batch=None,
+):
     previous_store = watchlists_router.get_store()
     previous_review = watchlists_router.get_review_service()
     store = WatchlistStore(root=tmp_path)
@@ -158,6 +180,10 @@ def _install_review(tmp_path: Path, *, screener, load_history, load_spy, load_ea
             load_history=load_history,
             load_spy=load_spy,
             load_earnings=load_earnings,
+            load_history_batch=load_history_batch,
+            today=today if today is not None else FROZEN,
+            expected_session=expected_session if expected_session is not None else FROZEN,
+            cache_root=tmp_path / "review_cache",
         )
     )
     return previous_store, previous_review, store
@@ -230,4 +256,53 @@ def test_post_reviews_no_completed_breakout_run(tmp_path: Path):
     finally:
         watchlists_router.set_store(previous_store)
         watchlists_router.set_review_service(previous_review)
+
+
+def test_checklist_api_updates_and_404s_for_missing(tmp_path: Path):
+    previous = watchlists_router.get_store()
+    watchlists_router.set_store(WatchlistStore(root=tmp_path))
+    client = TestClient(app)
+    try:
+        client.put("/api/watchlists/names", json={"ticker": "AAPL", "list": "stalk"})
+        resp = client.post(
+            "/api/watchlists/names/AAPL/checklist",
+            json={"catalyst": True, "vcp": False},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["chart_checklist"]["catalyst"] is True
+        assert body["chart_checklist"]["vcp"] is False
+        assert body["chart_checklist"]["linearity"] is None
+
+        missing = client.post(
+            "/api/watchlists/names/UNKNOWN/checklist",
+            json={"catalyst": True},
+        )
+        assert missing.status_code == 404
+    finally:
+        watchlists_router.set_store(previous)
+
+
+def test_put_name_with_checklist_and_focus_sets_approval(tmp_path: Path):
+    previous = watchlists_router.get_store()
+    watchlists_router.set_store(WatchlistStore(root=tmp_path))
+    client = TestClient(app)
+    try:
+        resp = client.put(
+            "/api/watchlists/names",
+            json={
+                "ticker": "NVDA",
+                "list": "focus",
+                "chart_checklist": {"catalyst": True, "stop_planned": True},
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["list"] == "focus"
+        assert body["manual_focus_approved_at"] is not None
+        assert body["chart_checklist"]["catalyst"] is True
+        assert body["chart_checklist"]["stop_planned"] is True
+    finally:
+        watchlists_router.set_store(previous)
+
 

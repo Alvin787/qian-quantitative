@@ -54,7 +54,12 @@ function runOptionLabel(run: ScreenerRun) {
       ? ` · ${run.passed}/${run.scored}`
       : ""
   const prefix = run.legacy ? "Legacy · " : ""
-  return `${prefix}${formatRunTime(run.startedAt)} · ${run.statusLabel}${counts}`
+  const asOf = run.asOfSession ? ` · as of ${run.asOfSession}` : ""
+  const screens =
+    run.screenManifest && run.screenManifest.length > 0
+      ? ` · ${run.screenManifest.length} screens`
+      : ""
+  return `${prefix}${formatRunTime(run.startedAt)} · ${run.statusLabel}${counts}${asOf}${screens}`
 }
 
 function StatusPill({ run }: { run: ScreenerRun }) {
@@ -363,6 +368,10 @@ export function ScreenerPanel({ strategy }: { strategy: Strategy }) {
                     ? `${run.passed} candidates / ${run.scored ?? 0} scored`
                     : `${run.scored ?? 0} tickers`}
                   {run.skipped ? ` · ${run.skipped} skipped` : ""}
+                  {run.asOfSession ? ` · as of ${run.asOfSession}` : ""}
+                  {run.screenManifest && run.screenManifest.length > 0
+                    ? ` · ${run.screenManifest.length} screens`
+                    : ""}
                 </span>
               ) : null}
             </div>

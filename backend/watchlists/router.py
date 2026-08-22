@@ -43,6 +43,7 @@ class NameBody(BaseModel):
     list: str
     note: str | None = None
     group: str | None = None
+    chart_checklist: dict[str, Any] | None = None
 
 
 class MoveBody(BaseModel):
@@ -69,6 +70,7 @@ def put_name(body: NameBody) -> dict[str, Any]:
             body.list,
             note=body.note,
             group=body.group,
+            chart_checklist=body.chart_checklist,
             added_at=_added_at(),
         )
     except ValueError as exc:
@@ -80,6 +82,17 @@ def put_name(body: NameBody) -> dict[str, Any]:
 def move_name(ticker: str, body: MoveBody) -> dict[str, Any]:
     try:
         name = get_store().move(ticker, body.list)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="ticker not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return asdict(name)
+
+
+@router.post("/names/{ticker}/checklist")
+def update_checklist(ticker: str, body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        name = get_store().update_checklist(ticker, body)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="ticker not found") from exc
     except ValueError as exc:

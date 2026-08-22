@@ -12,6 +12,7 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
+from backend.marketdata.calendar import breakout_run_allowed
 from backend.screener.hybrid_screener import (
     DEFAULT_OUTPUT_DIR,
     LEGACY_ALL_RESULTS,
@@ -166,6 +167,10 @@ class ScreenerRunService:
         """Start a background screener run. Raises RuntimeError if busy."""
         definition = get_strategy(strategy_id)
         opts = options or {}
+        if strategy_id == "breakout" and not breakout_run_allowed():
+            raise ValueError(
+                "Breakout runs are accepted only 15 minutes after the official XNYS close"
+            )
         with self._lock:
             if self._active_run_id is not None:
                 raise RuntimeError(
@@ -195,6 +200,8 @@ class ScreenerRunService:
                 "regime_ok": None,
                 "error": None,
                 "legacy": False,
+                "as_of_session": None,
+                "screen_manifest": None,
             }
             self.write_metadata(meta)
             self._active_run_id = run_id
@@ -234,6 +241,8 @@ class ScreenerRunService:
                     "notes": result.notes,
                     "regime_ok": result.regime_ok,
                     "error": None,
+                    "as_of_session": result.as_of_session,
+                    "screen_manifest": getattr(result, "screen_manifest", None),
                 }
             )
         except Exception as exc:  # noqa: BLE001 — persist any worker failure

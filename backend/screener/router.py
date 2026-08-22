@@ -53,6 +53,8 @@ class RunSummary(BaseModel):
     regime_ok: bool | None = None
     error: str | None = None
     legacy: bool = False
+    as_of_session: str | None = None
+    screen_manifest: list[dict[str, Any]] | None = None
 
 
 class RunListResponse(BaseModel):
@@ -136,6 +138,8 @@ def start_strategy_run(
     service = get_service()
     try:
         meta = service.start_run(strategy_id, options)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return meta

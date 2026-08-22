@@ -1,7 +1,12 @@
 # Lightweight monorepo orchestration for backend/ and frontend/
+VENV ?= .venv
+ifneq ($(wildcard $(VENV)/bin/python),)
+PYTHON ?= $(VENV)/bin/python
+else
 PYTHON ?= python3
+endif
 PIP ?= $(PYTHON) -m pip
-UVICORN ?= uvicorn
+UVICORN ?= $(PYTHON) -m uvicorn
 
 .PHONY: help install install-backend install-frontend \
 	run run-backend run-frontend \
@@ -34,12 +39,12 @@ install-frontend:
 
 run:
 	@trap 'kill 0' INT TERM EXIT; \
-	$(UVICORN) backend.main:app --reload --host 0.0.0.0 --port 8000 & \
+	$(UVICORN) backend.main:app --reload --host 127.0.0.1 --port 8000 & \
 	(cd frontend && npm run dev) & \
 	wait
 
 run-backend:
-	$(UVICORN) backend.main:app --reload --host 0.0.0.0 --port 8000
+	$(UVICORN) backend.main:app --reload --host 127.0.0.1 --port 8000
 
 run-frontend:
 	cd frontend && npm run dev

@@ -1,4 +1,10 @@
+from __future__ import annotations
+
 from datetime import date, timedelta
+
+import pandas as pd
+
+from backend.marketdata.calendar import xnys
 
 SESSION_TZ = "America/New_York"  # documentary constant; dates are naive YYYY-MM-DD session dates
 
@@ -14,22 +20,18 @@ def parse_session_date(value: str) -> date:
 def session_day_index(entry_date: date, as_of_date: date) -> int:
     """
     Require as_of_date >= entry_date.
-    Count Mon–Fri dates from entry_date to as_of_date with entry_date as day 0
-    (if entry_date is Sat/Sun, still treat it as day 0 but subsequent index only
-    advances on weekdays — simplest rule: start at 0; for each calendar day
-    after entry up to as_of inclusive of progression: if that day is weekday,
-    increment. Equivalently: number of weekdays in (entry, as_of] ).
+    Count XNYS sessions in (entry_date, as_of_date] with entry_date as day 0.
     Example: entry=2026-08-10 (Mon), as_of=2026-08-13 (Thu) -> 3.
     Example: entry=2026-08-10, as_of=2026-08-10 -> 0.
     Raise ValueError if as_of < entry.
     """
     if as_of_date < entry_date:
         raise ValueError("as_of_date must be >= entry_date")
+    if as_of_date == entry_date:
+        return 0
 
-    index = 0
-    current = entry_date + timedelta(days=1)
-    while current <= as_of_date:
-        if current.weekday() < 5:  # Mon–Fri
-            index += 1
-        current += timedelta(days=1)
-    return index
+    start = pd.Timestamp(entry_date + timedelta(days=1))
+    end = pd.Timestamp(as_of_date)
+    if start > end:
+        return 0
+    return int(len(xnys().sessions_in_range(start, end)))

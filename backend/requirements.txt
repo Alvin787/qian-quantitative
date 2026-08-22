@@ -15,3 +15,4 @@ pandas
 google-generativeai
 pytest
 httpx
+exchange-calendars

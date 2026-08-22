@@ -66,11 +66,11 @@ Educational risk and trade-management calculator for open (or hypothetical) long
 | `POST /api/positions/size` | Share count + initial 3-stop book from equity, entry, and final stop |
 | `POST /api/positions/plan` | Day-indexed action plan / stop book / nuance alerts for an open trade |
 
-Session dates (`entry_date`, `as_of_date`, and related close-below dates) are US equity calendar days in IANA timezone `America/New_York` (`YYYY-MM-DD`, not UTC instants). **Day index** counts Mon–Fri session days from entry as day 0 and skips weekends only.
+Session dates (`entry_date`, `as_of_date`, and related close-below dates) are US equity calendar days in IANA timezone `America/New_York` (`YYYY-MM-DD`, not UTC instants). **Day index** counts XNYS trading sessions from entry as day 0 via `exchange-calendars` (skipping weekends and exchange holidays).
 
 Sizing defaults follow the master trading strategy: **0.5%–1.0%** of equity risk (`fixed_pct`), with optional **Kelly / half-Kelly** (still clamped to a max risk %).
 
-**Limitations:** ATR / MA / ORL and similar levels are manual inputs (no live market-data fetch); there is no NYSE holiday calendar (weekends only are skipped); open trades are not persisted on the backend; this is an educational calculator, not broker or order execution.
+**Limitations:** ATR / MA / ORL and similar levels are manual inputs (no live market-data fetch); open trades are not persisted on the backend; this is an educational calculator, not broker or order execution.
 
 Positions APIs live under `/api/positions` on the FastAPI backend. With both `make run-backend` and `make run-frontend` running, the Vite proxy forwards those requests like the Screener and Market Diary.
 
@@ -79,12 +79,12 @@ Positions APIs live under `/api/positions` on the FastAPI backend. With both `ma
 The sidebar **Screener** tab is the home page. Use the strategy dropdown to pick **Breakout** (first) or **Reversal** (second). A run scans only the Finviz screens that strategy declares. Only one run is active at a time across all strategies; the UI polls until completion, then selects the new result.
 
 - **Reversal** is the hybrid pullback strategy: **All / Candidates** toggle, unchanged automated gates, ticker search, and the last 14 days of run history.
-- **Breakout** is currently a universe-only union of 12 screens. Rows expose `ticker`, `industry`, `screen_count`, and `source_screens`; there are no scoring criteria yet.
+- **Breakout** is a fail-closed post-close union of independent screen families. Rows expose `ticker`, `industry`, `screen_count`, `screen_family_count`, `source_screens`, and `as_of_session`.
 - The results table paginates at **100 rows per page** (page indicator and previous/next).
 
 ### Screens
 
-All 13 Finviz screens live in `backend/screener/screens.py`. Strategies reference screens by id; adding a screen to a strategy is a one-line change to its `screen_ids`.
+All 14 Finviz screens live in `backend/screener/screens.py`. Strategies reference screens by id; adding a screen to a strategy is a one-line change to its `screen_ids`.
 
 Each run writes collision-safe CSVs under `backend/screener/screener_output/`:
 
@@ -100,7 +100,7 @@ The Screener UI talks to `/api/screener/strategies` and `/api/screener/{strategy
 
 ## Watchlists
 
-The sidebar **Watchlists** tab is the name funnel: **Master → Stalk → Focus → Back**. Post-close **Review** ingests Breakout output and highlights names; there is no auto-promote. **Copy** buttons produce comma-separated tickers for TradingView. Data lives under `backend/watchlists/watchlist_data/` (gitignored).
+The sidebar **Watchlists** tab is the name funnel: **Master → Stalk → Focus → Back**. Post-close **Review** ranks a chart-review queue from Breakout output; there is no auto-promote. The strongest automated label is `chart_review_ready`, which is not Focus; Focus is a manual move after the chart pass. Watchlists earnings leeway uses XNYS sessions. **Copy** buttons produce comma-separated tickers for TradingView. Data lives under `backend/watchlists/watchlist_data/` (gitignored).
 
 ## Setup
 
@@ -136,11 +136,11 @@ make run              # backend + frontend together (Ctrl+C stops both)
 Or run them separately:
 
 ```bash
-make run-backend      # uvicorn backend.main:app on http://0.0.0.0:8000
+make run-backend      # uvicorn backend.main:app on http://127.0.0.1:8000
 make run-frontend     # Vite dev server (proxies /api → backend)
 ```
 
-Open the Vite URL shown in the terminal; Screener is the home page.
+Open the Vite URL shown in the terminal; Screener is the home page. Watchlist mutation APIs are unauthenticated and the server must stay on loopback.
 
 ## Build & lint
 

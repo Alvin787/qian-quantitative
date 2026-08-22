@@ -22,6 +22,11 @@ def test_session_day_index_weekend_spanning() -> None:
     assert session_day_index(date(2026, 8, 7), date(2026, 8, 10)) == 1
 
 
+def test_session_day_index_thanksgiving_holiday_skip() -> None:
+    # Wed 2026-11-25 -> Fri 2026-11-27 is 1 (Thu Nov 26 is Thanksgiving)
+    assert session_day_index(date(2026, 11, 25), date(2026, 11, 27)) == 1
+
+
 def test_session_day_index_as_of_before_entry() -> None:
     with pytest.raises(ValueError):
         session_day_index(date(2026, 8, 13), date(2026, 8, 10))

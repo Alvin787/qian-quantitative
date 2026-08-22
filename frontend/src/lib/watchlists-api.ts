@@ -28,15 +28,34 @@ export type Gates = {
   volume_dryup: boolean | null
   range_compress: boolean | null
   near_10_20: boolean | null
+  atr_pct: number | null
+  extension_basis: string | null
+  rs_sessions: number | null
+  price_as_of: string | null
+  data_fresh: boolean | null
+}
+
+export type ChartChecklist = {
+  catalyst: boolean | null
+  vcp: boolean | null
+  linearity: boolean | null
+  pivot: boolean | null
+  group_leader: boolean | null
+  gap_resistance_ok: boolean | null
+  stop_planned: boolean | null
+  alert_set: boolean | null
+  earnings_verified: boolean | null
 }
 
 export type Readiness =
   | "unscored"
   | "watch"
   | "stalk_ready"
-  | "focus_ready"
+  | "chart_review_ready"
   | "earnings_blocked"
+  | "data_incomplete"
   | "disrupted"
+  | "excluded"
   | "unknown"
 
 export type WatchlistName = {
@@ -44,6 +63,9 @@ export type WatchlistName = {
   list: string
   added_at: string
   source_screens: string[]
+  historical_source_screens: string[]
+  screen_count: number | null
+  screen_family_count: number | null
   industry: string
   note: string
   group: string
@@ -51,6 +73,8 @@ export type WatchlistName = {
   queue_reason: string | null
   fail_reasons: string
   gates: Gates
+  chart_checklist: ChartChecklist
+  manual_focus_approved_at: string | null
   last_scored_at: string | null
 }
 
@@ -100,6 +124,7 @@ export async function upsertName(
     list: string
     note?: string | null
     group?: string | null
+    chart_checklist?: Partial<ChartChecklist> | null
   },
   signal?: AbortSignal
 ): Promise<WatchlistName> {
@@ -126,6 +151,26 @@ export async function moveName(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ list }),
+      signal,
+    }
+  )
+  if (!response.ok) {
+    throw new Error(await readError(response))
+  }
+  return response.json() as Promise<WatchlistName>
+}
+
+export async function updateChecklist(
+  ticker: string,
+  checklist: Partial<ChartChecklist>,
+  signal?: AbortSignal
+): Promise<WatchlistName> {
+  const response = await fetch(
+    `${BASE}/names/${encodeURIComponent(ticker)}/checklist`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(checklist),
       signal,
     }
   )

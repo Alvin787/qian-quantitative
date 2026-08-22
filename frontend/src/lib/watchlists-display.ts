@@ -2,11 +2,13 @@ import { humanizeToken } from "@/lib/screener-columns"
 import type { Readiness } from "@/lib/watchlists-api"
 
 export const READINESS_ORDER: Readiness[] = [
-  "focus_ready",
+  "chart_review_ready",
   "stalk_ready",
   "watch",
   "earnings_blocked",
+  "data_incomplete",
   "disrupted",
+  "excluded",
   "unscored",
   "unknown",
 ]
@@ -34,7 +36,11 @@ const SCREEN_LABELS: Record<string, { short: string; full: string }> = {
   },
   strongest_mover_1w: {
     short: "1W",
-    full: "Strongest mover, 1 week",
+    full: "Strongest mover, 1 week +20%",
+  },
+  strongest_mover_1w_tight: {
+    short: "1W +30%",
+    full: "Strongest mover, 1 week +30%",
   },
   strongest_mover_1m: {
     short: "1M",
@@ -59,6 +65,10 @@ const SCREEN_LABELS: Record<string, { short: string; full: string }> = {
   high_short_float: {
     short: "Short float",
     full: "High short float",
+  },
+  liquid_leveraged_etf: {
+    short: "Lev ETF",
+    full: "Liquid leveraged / inverse ETF",
   },
 }
 

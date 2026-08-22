@@ -28,10 +28,28 @@ import {
   getReview,
   moveName,
   startReview,
+  updateChecklist,
   upsertName,
+  type ChartChecklist,
   type FunnelName,
   type FunnelState,
 } from "@/lib/watchlists-api"
+
+const CHECKLIST_ITEMS: {
+  key: keyof ChartChecklist
+  label: string
+  shortLabel: string
+}[] = [
+  { key: "catalyst", label: "Catalyst", shortLabel: "CAT" },
+  { key: "vcp", label: "VCP", shortLabel: "VCP" },
+  { key: "linearity", label: "Linearity", shortLabel: "LIN" },
+  { key: "pivot", label: "Pivot", shortLabel: "PIV" },
+  { key: "group_leader", label: "Group Leader", shortLabel: "LEAD" },
+  { key: "gap_resistance_ok", label: "Gap/Resistance OK", shortLabel: "GAP" },
+  { key: "stop_planned", label: "Stop Planned", shortLabel: "STP" },
+  { key: "alert_set", label: "Alert Set", shortLabel: "ALT" },
+  { key: "earnings_verified", label: "Earnings Verified", shortLabel: "ERN" },
+]
 
 type FunnelView = "tonight" | "master" | "stalk" | "focus" | "back"
 
@@ -39,10 +57,10 @@ const VIEWS: FunnelView[] = ["tonight", "master", "stalk", "focus", "back"]
 const POLL_INTERVAL_MS = 3000
 
 const GATES_NOTE =
-  "Automated gates: ADR% ≥ 3, $ volume, biotech exclude, 10/20-MA stack, extension ≤ 4× ADR% from 50-MA, earnings ≥ 6 sessions, RS vs SPY, declining-200 room. Review highlights; it does not promote."
+  "Automated gates: ADR% ≥ 3 (Swing Data), $ volume, industry required, biotech exclude, 10/20-MA stack, extension ≤ 4× ATR% from 50-MA (20-MA IPO fallback), earnings ≥ 6 XNYS sessions, aligned RS vs SPY, declining-200 room in ADR%. Review highlights; it does not promote."
 
 const CHART_NOTE =
-  "Chart pass (you): VCP tightness, linearity, pivot/alert, leader in a leading group, catalytic-move quality, gap-up LoD exception. Volume dry-up and range compression are bonus flags only."
+  "Chart pass (you): VCP tightness, linearity, pivot/alert, leader in a leading group, catalytic-move quality, gap-up LoD exception. Volume dry-up and range compression are bonus flags only. Focus is manual after this chart pass. Diary does not change readiness."
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong."
@@ -71,15 +89,31 @@ function viewLabel(view: FunnelView) {
 function readinessTone(
   readiness: string
 ): "positive" | "negative" | "neutral" {
-  if (readiness === "focus_ready") return "positive"
+  if (readiness === "chart_review_ready") return "positive"
   if (
     readiness === "disrupted" ||
     readiness === "earnings_blocked" ||
-    readiness === "unknown"
+    readiness === "unknown" ||
+    readiness === "data_incomplete" ||
+    readiness === "excluded"
   ) {
     return "negative"
   }
   return "neutral"
+}
+
+function historicalScreenExtras(name: FunnelName) {
+  const current = new Set(name.source_screens)
+  return name.historical_source_screens.filter((id) => !current.has(id))
+}
+
+function formatFresh(dataFresh: boolean | null, priceAsOf: string | null) {
+  if (dataFresh === false) {
+    return priceAsOf ? `stale ${priceAsOf}` : "stale"
+  }
+  if (priceAsOf) return priceAsOf
+  if (dataFresh === true) return "yes"
+  return "—"
 }
 
 function formatExtension(value: number | null) {
@@ -318,7 +352,7 @@ export function WatchlistsPanel() {
     [inView, readinessFilter]
   )
   const showList = view === "tonight"
-  const columnCount = showList ? 12 : 11
+  const columnCount = showList ? 17 : 16
   const reviewDisabled =
     funnel?.review.status === "running" || activeReviewId != null
 
@@ -337,6 +371,28 @@ export function WatchlistsPanel() {
     try {
       await moveName(name.ticker, list)
       await refresh()
+    } catch (err: unknown) {
+      setError(errorMessage(err))
+    }
+  }
+
+  async function onToggleChecklist(
+    name: FunnelName,
+    key: keyof ChartChecklist
+  ) {
+    const currentVal = Boolean(name.chart_checklist?.[key])
+    const nextVal = !currentVal
+    try {
+      const updated = await updateChecklist(name.ticker, { [key]: nextVal })
+      setFunnel((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          names: prev.names.map((n) =>
+            n.ticker === updated.ticker ? updated : n
+          ),
+        }
+      })
     } catch (err: unknown) {
       setError(errorMessage(err))
     }
@@ -441,12 +497,17 @@ export function WatchlistsPanel() {
               {showList ? <TableHead className="px-2">List</TableHead> : null}
               <TableHead className="px-2">Industry</TableHead>
               <TableHead className="px-2">Source screens</TableHead>
+              <TableHead className="px-2 text-center">Family</TableHead>
               <TableHead className="px-2">Note</TableHead>
               <TableHead className="px-2">Readiness</TableHead>
               <TableHead className="px-2">Queue reason</TableHead>
               <TableHead className="px-2">Fail reasons</TableHead>
+              <TableHead className="px-2 text-center">Checklist</TableHead>
               <TableHead className="px-2 text-center">ADR%</TableHead>
               <TableHead className="px-2 text-center">Extension</TableHead>
+              <TableHead className="px-2 text-center">Fresh</TableHead>
+              <TableHead className="px-2 text-center">RS sess</TableHead>
+              <TableHead className="px-2 text-center">Ext basis</TableHead>
               <TableHead className="px-2 text-center">
                 Days to earnings
               </TableHead>
@@ -472,6 +533,11 @@ export function WatchlistsPanel() {
                 const promote = promoteTarget(name.list)
                 const demote = demoteTarget(name.list)
                 const tickerHref = tradingViewUrl(name.ticker)
+                const historicalExtras = historicalScreenExtras(name)
+                const freshLabel = formatFresh(
+                  name.gates.data_fresh,
+                  name.gates.price_as_of
+                )
                 return (
                   <TableRow key={name.ticker}>
                     <TableCell className="px-2 py-1.5 font-medium">
@@ -488,6 +554,14 @@ export function WatchlistsPanel() {
                       ) : (
                         name.ticker
                       )}
+                      {name.manual_focus_approved_at ? (
+                        <span
+                          className="text-muted-foreground block text-[10px] tabular-nums whitespace-nowrap font-normal"
+                          title={`Focus approved: ${name.manual_focus_approved_at}`}
+                        >
+                          Focus {name.manual_focus_approved_at.slice(0, 10)}
+                        </span>
+                      ) : null}
                     </TableCell>
                     {showList ? (
                       <TableCell className="px-2 py-1.5">
@@ -499,13 +573,29 @@ export function WatchlistsPanel() {
                     <TableCell className="max-w-[12rem] truncate px-2 py-1.5">
                       {name.industry ? decodeDisplayText(name.industry) : "—"}
                     </TableCell>
-                    <TableCell className="max-w-sm px-2 py-1.5 whitespace-normal">
+                    <TableCell
+                      className="max-w-sm px-2 py-1.5 whitespace-normal"
+                      title={
+                        historicalExtras.length > 0
+                          ? `historical: ${historicalExtras.map(screenShortLabel).join(", ")}`
+                          : undefined
+                      }
+                    >
                       <TokenPills
                         items={name.source_screens}
                         variant="neutral"
                         labelFor={screenShortLabel}
                         titleFor={screenFullLabel}
                       />
+                      {historicalExtras.length > 0 ? (
+                        <span className="text-muted-foreground mt-0.5 block text-xs">
+                          historical:{" "}
+                          {historicalExtras.map(screenShortLabel).join(", ")}
+                        </span>
+                      ) : null}
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 text-center tabular-nums">
+                      {formatValue(name.screen_family_count)}
                     </TableCell>
                     <TableCell className="max-w-[12rem] truncate px-2 py-1.5">
                       {name.note || (
@@ -535,11 +625,62 @@ export function WatchlistsPanel() {
                         labelFor={failReasonLabel}
                       />
                     </TableCell>
+                    <TableCell className="px-2 py-1.5">
+                      <div className="flex flex-wrap items-center gap-1 max-w-[200px]">
+                        {CHECKLIST_ITEMS.map((item) => {
+                          const isChecked = Boolean(
+                            name.chart_checklist?.[item.key]
+                          )
+                          return (
+                            <button
+                              key={item.key}
+                              type="button"
+                              aria-pressed={isChecked}
+                              title={`${item.label}: ${isChecked ? "Checked (click to clear)" : "Unchecked (click to check)"}`}
+                              onClick={() =>
+                                void onToggleChecklist(name, item.key)
+                              }
+                              className={cn(
+                                "inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-medium tracking-tight",
+                                "transition-[color,background-color,transform] duration-[120ms] ease-out",
+                                "active:scale-[0.95] focus-visible:ring-1 focus-visible:ring-ring outline-none",
+                                isChecked
+                                  ? "bg-primary text-primary-foreground font-semibold"
+                                  : "bg-muted/60 text-muted-foreground hover:bg-accent hover:text-accent-foreground opacity-70 hover:opacity-100"
+                              )}
+                            >
+                              {item.shortLabel}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </TableCell>
                     <TableCell className="px-2 py-1.5 text-center tabular-nums">
                       {formatValue(name.gates.adr_pct)}
                     </TableCell>
                     <TableCell className="px-2 py-1.5 text-center tabular-nums">
                       {formatExtension(name.gates.extension_x)}
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "px-2 py-1.5 text-center tabular-nums",
+                        name.gates.data_fresh === false &&
+                          "text-muted-foreground"
+                      )}
+                    >
+                      {name.gates.data_fresh === false ? (
+                        <span className="text-destructive/80">{freshLabel}</span>
+                      ) : (
+                        freshLabel
+                      )}
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 text-center tabular-nums">
+                      {formatValue(name.gates.rs_sessions)}
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 text-center">
+                      {name.gates.extension_basis || (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1.5 text-center tabular-nums">
                       {formatValue(name.gates.days_to_earnings)}

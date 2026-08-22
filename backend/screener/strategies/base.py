@@ -17,6 +17,8 @@ class StrategyRunResult:
     skipped_tickers: list[str] = field(default_factory=list)
     notes: str | None = None
     regime_ok: bool | None = None
+    as_of_session: str | None = None
+    screen_manifest: list[dict[str, Any]] | None = None
 
 
 RunCallable = Callable[..., StrategyRunResult]  # called as run(outdir=Path, run_id=str, options=dict[str, Any])

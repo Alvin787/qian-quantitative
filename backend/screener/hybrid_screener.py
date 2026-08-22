@@ -20,7 +20,7 @@ What it does (in strategy-doc order)
          #3 linear advance (R^2 of log-price trend, 6 months)   [automated proxy]
          #4 prior up-leg on volume expansion                    [automated proxy]
      - avg dollar volume >= $20M
-     - extension <= 4x ADR% from the 50-MA
+     - extension <= 4x ATR% from the 50-MA
      - biotech hard exclude
 4. EARNINGS GATE (§7 #9): fetches the next earnings date for every name that
    survives the price gates and requires >= 6 sessions of leeway. Unknown
@@ -70,6 +70,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from backend.marketdata.calendar import latest_completed_session, sessions_before_earnings
+from backend.marketdata.indicators import adr_pct, atr_pct, ma_extension_x
 from backend.screener.finviz import scrape_finviz
 from backend.screener.screens import get_screen
 
@@ -169,8 +171,13 @@ def compute_regime(spy: pd.DataFrame) -> Regime | None:
     rising_200 = s200 > float(sma200_series.iloc[-1 - RISING_200_LOOKBACK])
     above_200 = c > s200
 
-    adr = float(((high / low - 1.0) * 100.0).tail(20).mean())
-    ext = ((c / sma50 - 1.0) * 100.0) / adr if adr > 0 else float("nan")
+    atr_pct_val = atr_pct(high=high, low=low, close=close)
+    ext_val = (
+        ma_extension_x(close=c, sma=sma50, atr_pct_value=atr_pct_val)
+        if (sma50 > 0 and atr_pct_val is not None)
+        else None
+    )
+    ext = ext_val if ext_val is not None else float("nan")
 
     if above_200 and rising_200:
         note = "OK — dip buying permitted"
@@ -364,10 +371,9 @@ def compute_row(ticker: str, df: pd.DataFrame, spy_r3: float, spy_r6: float,
     rising_200 = s200 > float(sma200.iloc[-1 - RISING_200_LOOKBACK])
     above_stack = (c > s50) and (c > s200) and rising_50 and rising_200
 
-    # ADR% = 20-day average of (H/L - 1) * 100
-    daily_range = (high / low - 1.0) * 100.0
-    adr_pct = float(daily_range.tail(20).mean())
-    adr_ok = ADR_MIN <= adr_pct <= ADR_MAX
+    # ADR% via shared marketdata indicator
+    adr_val = adr_pct(high=df["High"], low=df["Low"], close=df["Close"])
+    adr_ok = (adr_val is not None) and (ADR_MIN <= adr_val <= ADR_MAX)
 
     near_20_pct = abs(c / s20 - 1.0) * 100.0
     near_50_pct = abs(c / s50 - 1.0) * 100.0
@@ -396,7 +402,11 @@ def compute_row(ticker: str, df: pd.DataFrame, spy_r3: float, spy_r6: float,
     # Waterfall heuristic (§7 #3): depth from the 20d high in ADR units,
     # or expanding down-day volume in the last 5 sessions.
     high20 = float(high.tail(20).max())
-    depth_adr = ((high20 / c - 1.0) * 100.0) / adr_pct if adr_pct > 0 else float("nan")
+    depth_adr = (
+        ((high20 / c - 1.0) * 100.0) / adr_val
+        if (adr_val is not None and adr_val > 0)
+        else float("nan")
+    )
     vol50 = float(volume.tail(50).mean())
     chg_recent = close.diff().tail(5)
     dn_vols = volume.tail(5)[chg_recent < 0]
@@ -408,9 +418,13 @@ def compute_row(ticker: str, df: pd.DataFrame, spy_r3: float, spy_r6: float,
     avg_dollar_vol = float(dollar_vol)
     liq_ok = avg_dollar_vol >= AVG_DOLLAR_VOL_MIN
 
-    pct_above_50 = (c / s50 - 1.0) * 100.0
-    extension_x = pct_above_50 / adr_pct if adr_pct > 0 else float("nan")
-    ext_ok = extension_x <= EXT_MAX
+    atr_pct_val = atr_pct(high=df["High"], low=df["Low"], close=df["Close"])
+    extension_x = (
+        ma_extension_x(close=c, sma=s50, atr_pct_value=atr_pct_val)
+        if (s50 is not None and atr_pct_val is not None)
+        else None
+    )
+    ext_ok = (extension_x is not None) and (extension_x <= EXT_MAX)
 
     industry_l = (industry or "").lower()
     biotech = any(s in industry_l for s in BIOTECH_INDUSTRY_SUBSTR)
@@ -422,7 +436,7 @@ def compute_row(ticker: str, df: pd.DataFrame, spy_r3: float, spy_r6: float,
     if not above_stack:
         fails.append("trend_stack")
     if not adr_ok:
-        fails.append(f"adr({adr_pct:.1f}%)")
+        fails.append(f"adr({adr_val:.1f}%)" if adr_val is not None else "adr(nan%)")
     if not pullback_ok:
         fails.append("not_near_ma")
     if not rs_ok:
@@ -432,7 +446,7 @@ def compute_row(ticker: str, df: pd.DataFrame, spy_r3: float, spy_r6: float,
     if not liq_ok:
         fails.append("liquidity")
     if not ext_ok:
-        fails.append(f"ext({extension_x:.1f}x)")
+        fails.append(f"ext({extension_x:.1f}x)" if extension_x is not None else "ext(nanx)")
     if waterfall:
         warns.append(f"waterfall?(depth {depth_adr:.1f}xADR, dnvol {dn_vol_x:.1f}x)")
 
@@ -443,7 +457,7 @@ def compute_row(ticker: str, df: pd.DataFrame, spy_r3: float, spy_r6: float,
         warnings=";".join(warns),
         close=c, sma20=s20, sma50=s50, sma200=s200,
         rising_50=rising_50, rising_200=rising_200, above_stack=above_stack,
-        adr_pct=adr_pct, adr_ok=adr_ok,
+        adr_pct=adr_val if adr_val is not None else float("nan"), adr_ok=adr_ok,
         near_20_pct=near_20_pct, near_50_pct=near_50_pct, pullback_ok=pullback_ok,
         rs_3m_pp=rs_3m_pp, rs_6m_pp=rs_6m_pp, rs_ok=rs_ok,
         p1_pullbacks=p1, p1_episodes=p1_eps,
@@ -453,7 +467,7 @@ def compute_row(ticker: str, df: pd.DataFrame, spy_r3: float, spy_r6: float,
         proxies_passed=proxies_passed, proxies_ok=proxies_ok,
         waterfall_flag=waterfall, pullback_depth_adr=depth_adr,
         avg_dollar_vol=avg_dollar_vol, liq_ok=liq_ok,
-        extension_x=extension_x, ext_ok=ext_ok,
+        extension_x=extension_x if extension_x is not None else float("nan"), ext_ok=ext_ok,
         industry=industry, biotech=biotech,
         _fails=fails,
     )
@@ -492,7 +506,26 @@ def next_earnings_date(ticker: str) -> date | None:
     return None
 
 
-def apply_earnings_gate(rows: list[Row], sleep_s: float = 0.2) -> None:
+def annotate_earnings(row: Row, earnings_date: date | None, as_of: date | None = None) -> None:
+    if as_of is None:
+        as_of = latest_completed_session()
+    if earnings_date is None:
+        row.earn_ok = "unknown"
+        row.warnings = ";".join(x for x in [row.warnings, "earnings_unknown_VERIFY"] if x)
+    else:
+        sessions = sessions_before_earnings(as_of_session=as_of, earnings_date=earnings_date)
+        row.earnings_date = earnings_date.isoformat()
+        row.days_to_earnings = float(sessions)
+        if sessions >= EARN_MIN_SESSIONS:
+            row.earn_ok = "ok"
+        else:
+            row.earn_ok = "FAIL"
+            row._fails.append(f"earnings_in_{sessions}d")
+            row.fail_reasons = ";".join(row._fails)
+            row.pass_all = False
+
+
+def apply_earnings_gate(rows: list[Row], sleep_s: float = 0.2, as_of: date | None = None) -> None:
     candidates = [r for r in rows if r.pass_all]
     if not candidates:
         return
@@ -500,22 +533,14 @@ def apply_earnings_gate(rows: list[Row], sleep_s: float = 0.2) -> None:
           f"{len(candidates)} surviving names...")
     for r in candidates:
         d = next_earnings_date(r.ticker)
+        annotate_earnings(r, d, as_of=as_of)
         if d is None:
-            r.earn_ok = "unknown"
-            r.warnings = ";".join(x for x in [r.warnings, "earnings_unknown_VERIFY"] if x)
             print(f"  {r.ticker:<6} earnings date UNKNOWN — verify manually")
         else:
-            sessions = int(np.busday_count(date.today(), d))
-            r.earnings_date = d.isoformat()
-            r.days_to_earnings = sessions
-            if sessions >= EARN_MIN_SESSIONS:
-                r.earn_ok = "ok"
+            sessions = int(r.days_to_earnings)
+            if r.earn_ok == "ok":
                 print(f"  {r.ticker:<6} earnings {d} ({sessions} sessions) — ok")
             else:
-                r.earn_ok = "FAIL"
-                r._fails.append(f"earnings_in_{sessions}d")
-                r.fail_reasons = ";".join(r._fails)
-                r.pass_all = False
                 print(f"  {r.ticker:<6} earnings {d} ({sessions} sessions) — REJECT (<{EARN_MIN_SESSIONS})")
         time.sleep(sleep_s)
 

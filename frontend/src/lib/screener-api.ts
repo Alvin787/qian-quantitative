@@ -16,6 +16,16 @@ export type Strategy = {
   screens: ScreenerScreen[]
 }
 
+export type ScreenManifestEntry = {
+  screen_id: string
+  url: string
+  selected: boolean
+  row_count: number
+  reported_total: number
+  pages: number
+  error: string | null
+}
+
 export type ScreenerRun = {
   id: string
   status: RunStatus
@@ -28,6 +38,8 @@ export type ScreenerRun = {
   skipped: number | null
   error: string | null
   legacy: boolean
+  asOfSession: string | null
+  screenManifest: ScreenManifestEntry[] | null
 }
 
 export type ResultValue = string | number | boolean | null
@@ -62,6 +74,8 @@ type RawRun = {
   skipped?: number | null
   error?: string | null
   legacy?: boolean
+  as_of_session?: string | null
+  screen_manifest?: ScreenManifestEntry[] | null
 }
 
 type RawResults = {
@@ -112,6 +126,8 @@ function normalizeRun(raw: RawRun): ScreenerRun {
     skipped: raw.skipped ?? null,
     error: raw.error ?? null,
     legacy: raw.legacy ?? false,
+    asOfSession: raw.as_of_session ?? null,
+    screenManifest: raw.screen_manifest ?? null,
   }
 }
 

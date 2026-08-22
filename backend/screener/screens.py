@@ -51,7 +51,12 @@ SCREENS: dict[str, FinvizScreen] = {
     ),
     "strongest_mover_1w": FinvizScreen(
         id="strongest_mover_1w",
-        label="Strongest mover, 1 week",
+        label="Strongest mover, 1 week +20%",
+        url="https://finviz.com/screener?v=111&f=cap_smallover%2Cgeo_usa%2Csh_avgvol_o300%2Csh_curvol_o100%2Cta_perf_1w20o%2Cta_volatility_wo4&ft=4&o=-marketcap",
+    ),
+    "strongest_mover_1w_tight": FinvizScreen(
+        id="strongest_mover_1w_tight",
+        label="Strongest mover, 1 week +30%",
         url="https://finviz.com/screener?v=111&f=cap_smallover%2Cgeo_usa%2Csh_avgvol_o400%2Csh_curvol_o100%2Cta_perf_1w30o%2Cta_volatility_wo4&ft=4&o=-marketcap&preset=s151705047",
     ),
     "strongest_mover_1m": FinvizScreen(
@@ -84,7 +89,47 @@ SCREENS: dict[str, FinvizScreen] = {
         label="High short float",
         url="https://finviz.com/screener?v=131&f=cap_smallover%2Cind_stocksonly%2Csh_avgvol_o1000%2Csh_float_u100%2Csh_short_o30&ft=4&preset=s151705067",
     ),
+    "liquid_leveraged_etf": FinvizScreen(
+        id="liquid_leveraged_etf",
+        label="Liquid Leveraged & Inverse ETFs",
+        url="",
+        max_pages=0,
+    ),
 }
+
+
+SCREEN_FAMILY: dict[str, str] = {
+    "canslim_calibrated": "quality_growth",
+    "high_adr_hottest": "speculative_short_volatility",
+    "high_adr_short_squeeze": "speculative_short_volatility",
+    "high_short_float": "speculative_short_volatility",
+    "extended_base_above_sma200": "base",
+    "extended_base_below_sma200": "base",
+    "strongest_mover_1w": "momentum",
+    "strongest_mover_1w_tight": "momentum",
+    "strongest_mover_1m": "momentum",
+    "strongest_mover_1m_strong_market": "momentum",
+    "strongest_mover_3m": "momentum",
+    "strongest_mover_6m": "momentum",
+    "ipo_this_year": "ipo",
+    "liquid_leveraged_etf": "etf",
+}
+
+
+def screen_family_ids(source_screens: list[str]) -> list[str]:
+    """Unique families in first-seen order for ids that exist in SCREEN_FAMILY."""
+    families: list[str] = []
+    seen: set[str] = set()
+    for screen_id in source_screens:
+        family = SCREEN_FAMILY.get(screen_id)
+        if family is not None and family not in seen:
+            seen.add(family)
+            families.append(family)
+    return families
+
+
+def screen_family_count(source_screens: list[str]) -> int:
+    return len(screen_family_ids(source_screens))
 
 
 def get_screen(screen_id: str) -> FinvizScreen:

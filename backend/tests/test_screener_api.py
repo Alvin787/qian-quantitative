@@ -279,7 +279,7 @@ class TestScreenerApi:
         breakout = body["strategies"][0]
         assert breakout["id"] == "breakout"
         assert breakout["views"] == ["all"]
-        assert len(breakout["screens"]) == 12
+        assert len(breakout["screens"]) == 14
         reversal = body["strategies"][1]
         assert reversal["id"] == "reversal"
         assert reversal["views"] == ["candidates", "all"]
@@ -293,7 +293,40 @@ class TestScreenerApi:
         strategies = resp.json()["strategies"]
         assert strategies[0]["id"] == "breakout"
         assert strategies[0]["views"] == ["all"]
-        assert len(strategies[0]["screens"]) == 12
+        assert len(strategies[0]["screens"]) == 14
+
+    def test_breakout_start_rejected_before_close(self, api_client, monkeypatch):
+        client, service = api_client
+        monkeypatch.setattr(
+            "backend.screener.run_service.breakout_run_allowed",
+            lambda now=None: False,
+        )
+        before = {path.name for path in service.output_dir.iterdir()}
+        resp = client.post("/api/screener/breakout/runs", json={})
+        assert resp.status_code == 400
+        assert (
+            "Breakout runs are accepted only 15 minutes after the official XNYS close"
+            in resp.json()["detail"]
+        )
+        after = {path.name for path in service.output_dir.iterdir()}
+        assert after == before
+        assert list(service.output_dir.glob("breakout_run_*.json")) == []
+
+    def test_reversal_start_not_gated_on_breakout_window(
+        self, api_client, monkeypatch
+    ):
+        client, service = api_client
+        monkeypatch.setattr(
+            "backend.screener.run_service.breakout_run_allowed",
+            lambda now=None: False,
+        )
+        resp = client.post("/api/screener/reversal/runs", json={})
+        assert resp.status_code == 202
+        run_id = resp.json()["run_id"]
+        deadline = time.time() + 5
+        while service.has_active_run() and time.time() < deadline:
+            time.sleep(0.01)
+        assert (service.output_dir / f"hybrid_run_{run_id}.json").exists()
 
     def test_breakout_candidates_view_400(self, api_client):
         client, service = api_client
@@ -369,6 +402,57 @@ class TestScreenerApi:
         assert len(reversal_runs.json()["runs"]) == 1
         assert breakout_runs.json()["runs"][0]["run_id"] == "2026-08-08_130000"
         assert reversal_runs.json()["runs"][0]["run_id"] == "2026-08-08_140000"
+
+    def test_breakout_run_manifest_surfaced_in_api(self, api_client):
+        client, service = api_client
+        run_id = "2026-08-14_163000"
+        manifest = [
+            {
+                "screen_id": "canslim_calibrated",
+                "url": "https://finviz.com/screener.ashx?v=111&s=ta_topgainers",
+                "selected": True,
+                "row_count": 5,
+                "reported_total": 5,
+                "pages": 1,
+                "error": None,
+            },
+            {
+                "screen_id": "strongest_mover_1m",
+                "url": "https://finviz.com/screener.ashx?v=111&f=ta_perf_4wup",
+                "selected": False,
+                "row_count": 60,
+                "reported_total": 60,
+                "pages": 3,
+                "error": None,
+            },
+        ]
+        service.write_metadata(
+            {
+                "run_id": run_id,
+                "strategy_id": "breakout",
+                "status": "completed",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "scored": 5,
+                "passed": None,
+                "skipped": 0,
+                "files": {"all": f"breakout_all_results_{run_id}.csv"},
+                "views": ["all"],
+                "error": None,
+                "legacy": False,
+                "as_of_session": "2026-08-14",
+                "screen_manifest": manifest,
+            }
+        )
+        resp = client.get(f"/api/screener/breakout/runs/{run_id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["screen_manifest"] == manifest
+        assert len(body["screen_manifest"]) == 2
+        assert body["screen_manifest"][0]["screen_id"] == "canslim_calibrated"
+        assert body["screen_manifest"][0]["selected"] is True
+        assert body["screen_manifest"][1]["screen_id"] == "strongest_mover_1m"
+        assert body["screen_manifest"][1]["selected"] is False
 
     def test_unknown_strategy_404(self, api_client):
         client, _service = api_client
@@ -481,6 +565,7 @@ class TestScreenerApi:
             status = client.get(f"/api/screener/reversal/runs/{run_id}")
             assert status.status_code == 200
             if status.json()["status"] == "completed":
+                assert status.json().get("screen_manifest") is None
                 break
             time.sleep(0.02)
         else:
