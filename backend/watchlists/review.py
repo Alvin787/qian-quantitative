@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from backend.screener.run_service import ScreenerRunService
 
 _LOADER_TIMEOUT_S = 15
+_BATCH_CHUNK_SIZE = 25
 REQUIRED_CSV_COLUMNS = ("ticker", "industry", "source_screens")
 KNOWN_SCREEN_IDS = set(SCREENS) | set(SCREEN_FAMILY)
 READINESS_RANK = {
@@ -220,7 +221,7 @@ def _funnel_sort_key(name: Name) -> tuple:
     )
 
 
-def _timeout_call(fn, *args):
+def _timeout_call(fn, *args, timeout_s: float = _LOADER_TIMEOUT_S):
     holder: dict[str, object] = {}
 
     def runner() -> None:
@@ -231,7 +232,7 @@ def _timeout_call(fn, *args):
 
     thread = threading.Thread(target=runner, daemon=True)
     thread.start()
-    thread.join(_LOADER_TIMEOUT_S)
+    thread.join(timeout_s)
     if thread.is_alive() or "error" in holder:
         return None
     return holder.get("value")
@@ -240,64 +241,80 @@ def _timeout_call(fn, *args):
 def _yf_history(ticker: str) -> pd.DataFrame | None:
     import yfinance as yf
 
-    frame = yf.Ticker(ticker).history(period="1y", auto_adjust=False)
-    if frame is None or frame.empty:
+    try:
+        frame = yf.Ticker(yahoo_symbol(ticker)).history(period="2y", auto_adjust=True)
+        if frame is None or frame.empty:
+            return None
+        missing = [col for col in ("Open", "High", "Low", "Close", "Volume") if col not in frame.columns]
+        if missing:
+            return None
+        out = frame.loc[:, ["Open", "High", "Low", "Close", "Volume"]].copy()
+        out.index = pd.DatetimeIndex(out.index)
+        return out
+    except Exception:
         return None
-    missing = [col for col in ("Open", "High", "Low", "Close", "Volume") if col not in frame.columns]
-    if missing:
-        return None
-    out = frame.loc[:, ["Open", "High", "Low", "Close", "Volume"]].copy()
-    out.index = pd.DatetimeIndex(out.index)
-    return out
 
 
 def _yf_earnings(ticker: str) -> date | None:
     import yfinance as yf
 
-    calendar = yf.Ticker(ticker).calendar
-    raw = None
-    if isinstance(calendar, dict):
-        raw = calendar.get("Earnings Date") or calendar.get("earningsDate")
-        if isinstance(raw, (list, tuple)) and raw:
-            raw = raw[0]
-    elif isinstance(calendar, pd.DataFrame) and not calendar.empty:
-        if "Earnings Date" in calendar.index:
-            raw = calendar.loc["Earnings Date"].iloc[0]
-        elif "Earnings Date" in calendar.columns:
-            raw = calendar["Earnings Date"].iloc[0]
-    if isinstance(raw, datetime):
-        return raw.date()
-    if isinstance(raw, date):
-        return raw
-    if isinstance(raw, pd.Timestamp):
-        return raw.date()
+    try:
+        calendar = yf.Ticker(yahoo_symbol(ticker)).calendar
+        raw = None
+        if isinstance(calendar, dict):
+            raw = calendar.get("Earnings Date") or calendar.get("earningsDate")
+            if isinstance(raw, (list, tuple)) and raw:
+                raw = raw[0]
+        elif isinstance(calendar, pd.DataFrame) and not calendar.empty:
+            if "Earnings Date" in calendar.index:
+                raw = calendar.loc["Earnings Date"].iloc[0]
+            elif "Earnings Date" in calendar.columns:
+                raw = calendar["Earnings Date"].iloc[0]
+        if isinstance(raw, datetime):
+            return raw.date()
+        if isinstance(raw, date):
+            return raw
+        if isinstance(raw, pd.Timestamp):
+            return raw.date()
+    except Exception:
+        return None
     return None
 
 
 def _yf_download_batch(tickers: list[str], *, include_spy: bool = True) -> dict[str, pd.DataFrame]:
     import yfinance as yf
 
-    yf_tickers = [yahoo_symbol(t) for t in tickers]
+    unique_tickers = list(dict.fromkeys(tickers))
+    yf_tickers = [yahoo_symbol(t) for t in unique_tickers]
     if include_spy and "SPY" not in yf_tickers:
         yf_tickers.append("SPY")
     if not yf_tickers:
         return {}
 
-    def _download():
-        return yf.download(
-            tickers=yf_tickers,
-            period="2y",
-            interval="1d",
-            group_by="ticker",
-            auto_adjust=True,
-            threads=True,
-            progress=False,
-        )
+    yf_frames: dict[str, pd.DataFrame] = {}
 
-    data = _timeout_call(_download)
-    yf_frames = frames_from_yf_download(data, yf_tickers)
+    for i in range(0, len(yf_tickers), _BATCH_CHUNK_SIZE):
+        chunk = yf_tickers[i : i + _BATCH_CHUNK_SIZE]
+
+        def _download_chunk(current_chunk: list[str]):
+            return yf.download(
+                tickers=current_chunk,
+                period="2y",
+                interval="1d",
+                group_by="ticker",
+                auto_adjust=True,
+                threads=min(4, len(current_chunk)),
+                progress=False,
+                timeout=20,
+            )
+
+        data = _timeout_call(_download_chunk, chunk, timeout_s=30)
+        if data is not None and isinstance(data, pd.DataFrame) and not data.empty:
+            chunk_frames = frames_from_yf_download(data, chunk)
+            yf_frames.update(chunk_frames)
+
     mapped: dict[str, pd.DataFrame] = {}
-    for original in tickers:
+    for original in unique_tickers:
         frame = yf_frames.get(yahoo_symbol(original))
         if frame is not None:
             mapped[original] = frame
@@ -309,15 +326,15 @@ def _yf_download_batch(tickers: list[str], *, include_spy: bool = True) -> dict[
 
 
 def _default_load_history(ticker: str) -> pd.DataFrame | None:
-    return _timeout_call(_yf_history, ticker)
+    return _timeout_call(_yf_history, ticker, timeout_s=_LOADER_TIMEOUT_S)
 
 
 def _default_load_spy() -> pd.DataFrame | None:
-    return _timeout_call(_yf_history, "SPY")
+    return _timeout_call(_yf_history, "SPY", timeout_s=_LOADER_TIMEOUT_S)
 
 
 def _default_load_earnings(ticker: str) -> date | None:
-    return _timeout_call(_yf_earnings, ticker)
+    return _timeout_call(_yf_earnings, ticker, timeout_s=10)
 
 
 class WatchlistReviewService:
@@ -555,6 +572,8 @@ class WatchlistReviewService:
             scored_by_ticker = {name.ticker: name for name in scored}
             for name in list(scored):
                 if "liquid_leveraged_etf" in (name.source_screens or []):
+                    continue
+                if frames.get(name.ticker) is None:
                     continue
                 if name.list in {"stalk", "focus"} or name.readiness in {
                     "chart_review_ready",

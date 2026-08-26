@@ -473,3 +473,78 @@ def test_review_uses_eod_cache_hit(tmp_path: Path):
     assert batch_calls[1] == ["BBB"]  # Only missing ticker BBB requested
     assert (cache_root / FROZEN.isoformat() / "BBB.csv").exists()
 
+
+def test_yf_download_batch_chunks_and_bounds_threads(monkeypatch):
+    from backend.watchlists.review import _yf_download_batch
+    import yfinance as yf
+
+    recorded_calls: list[dict] = []
+
+    def mock_download(tickers, **kwargs):
+        recorded_calls.append({"tickers": list(tickers), "kwargs": kwargs})
+        idx = pd.bdate_range(end="2026-08-14", periods=3)
+        close = pd.Series([10.0, 11.0, 12.0], index=idx)
+        ohlcv = {
+            "Open": close,
+            "High": close * 1.01,
+            "Low": close * 0.99,
+            "Close": close,
+            "Volume": pd.Series([1_000.0, 1_000.0, 1_000.0], index=idx),
+        }
+        if len(tickers) == 1:
+            return pd.DataFrame(ohlcv)
+        frames = {t: pd.DataFrame(ohlcv) for t in tickers}
+        return pd.concat(frames, axis=1)
+
+    monkeypatch.setattr(yf, "download", mock_download)
+
+    # 60 tickers + SPY = 61 tickers -> 3 chunks (25, 25, 11)
+    tickers = [f"TKR{i}" for i in range(60)]
+    result = _yf_download_batch(tickers, include_spy=True)
+
+    assert len(recorded_calls) == 3
+    assert len(recorded_calls[0]["tickers"]) == 25
+    assert len(recorded_calls[1]["tickers"]) == 25
+    assert len(recorded_calls[2]["tickers"]) == 11
+    for call in recorded_calls:
+        assert call["kwargs"]["threads"] <= 4
+    assert len(result) == 61  # 60 tickers + SPY
+    assert "SPY" in result
+    assert "TKR0" in result
+    assert "TKR59" in result
+
+
+def test_yf_download_batch_handles_chunk_failure(monkeypatch):
+    from backend.watchlists.review import _yf_download_batch
+    import yfinance as yf
+
+    call_count = 0
+
+    def mock_download(tickers, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First chunk fails
+            raise RuntimeError("curl thread failed")
+        idx = pd.bdate_range(end="2026-08-14", periods=3)
+        close = pd.Series([10.0, 11.0, 12.0], index=idx)
+        ohlcv = {
+            "Open": close,
+            "High": close * 1.01,
+            "Low": close * 0.99,
+            "Close": close,
+            "Volume": pd.Series([1_000.0, 1_000.0, 1_000.0], index=idx),
+        }
+        return pd.concat({t: pd.DataFrame(ohlcv) for t in tickers}, axis=1)
+
+    monkeypatch.setattr(yf, "download", mock_download)
+
+    # 30 tickers: chunk 1 (25 tickers) fails, chunk 2 (5 tickers + SPY = 6) succeeds
+    tickers = [f"TKR{i}" for i in range(30)]
+    result = _yf_download_batch(tickers, include_spy=True)
+
+    # Chunk 1 tickers missing, but Chunk 2 tickers and SPY are preserved
+    assert len(result) > 0
+    assert "SPY" in result
+
+

@@ -550,32 +550,46 @@ def apply_earnings_gate(rows: list[Row], sleep_s: float = 0.2, as_of: date | Non
 # ---------------------------------------------------------------------------
 def download_history(tickers: list[str]) -> dict[str, pd.DataFrame]:
     print(f"\nDownloading EOD history for {len(tickers)} tickers via yfinance...")
-    data = yf.download(
-        tickers=tickers,
-        period=f"{HISTORY_DAYS}d",
-        interval="1d",
-        group_by="ticker",
-        auto_adjust=True,
-        threads=True,
-        progress=False,
-    )
-
+    if not tickers:
+        return {}
     out: dict[str, pd.DataFrame] = {}
-    if len(tickers) == 1:
-        out[tickers[0]] = data
-        return out
+    chunk_size = 25
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i : i + chunk_size]
+        try:
+            data = yf.download(
+                tickers=chunk,
+                period=f"{HISTORY_DAYS}d",
+                interval="1d",
+                group_by="ticker",
+                auto_adjust=True,
+                threads=min(4, len(chunk)),
+                progress=False,
+                timeout=20,
+            )
+        except Exception as exc:
+            print(f"  Warning: batch download failed for chunk {chunk}: {exc}")
+            continue
 
-    if isinstance(data.columns, pd.MultiIndex):
-        level0 = data.columns.get_level_values(0)
-        level1 = data.columns.get_level_values(1)
-        if tickers[0] in set(level0):
-            for t in tickers:
-                if t in level0:
-                    out[t] = data[t].dropna(how="all")
-        else:
-            for t in tickers:
-                if t in set(level1):
-                    out[t] = data.xs(t, axis=1, level=1).dropna(how="all")
+        if data is None or data.empty:
+            continue
+
+        if len(chunk) == 1:
+            if not data.empty:
+                out[chunk[0]] = data.dropna(how="all")
+            continue
+
+        if isinstance(data.columns, pd.MultiIndex):
+            level0 = set(data.columns.get_level_values(0))
+            level1 = set(data.columns.get_level_values(1))
+            if chunk[0] in level0:
+                for t in chunk:
+                    if t in level0:
+                        out[t] = data[t].dropna(how="all")
+            else:
+                for t in chunk:
+                    if t in level1:
+                        out[t] = data.xs(t, axis=1, level=1).dropna(how="all")
     return out
 
 
